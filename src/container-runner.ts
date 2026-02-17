@@ -15,6 +15,9 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
 } from './config.js';
+
+// Use 'docker' on Linux, 'container' (Apple Container) on macOS
+const CONTAINER_CMD = os.platform() === 'linux' ? 'docker' : 'container';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -186,7 +189,18 @@ function buildVolumeMounts(
  * Secrets are never written to disk or mounted as files.
  */
 function readSecrets(): Record<string, string> {
-  return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+  return readEnvFile([
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'ANTHROPIC_API_KEY',
+    // Email outreach
+    'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM',
+    // X/Twitter
+    'X_API_KEY', 'X_API_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_SECRET',
+    // Facebook
+    'FB_PAGE_ID', 'FB_PAGE_ACCESS_TOKEN',
+    // LinkedIn
+    'LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_PERSON_URN',
+  ]);
 }
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
@@ -252,7 +266,7 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn('container', containerArgs, {
+    const container = spawn(CONTAINER_CMD, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -359,7 +373,7 @@ export async function runContainerAgent(
     const killOnTimeout = () => {
       timedOut = true;
       logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
-      exec(`container stop ${containerName}`, { timeout: 15000 }, (err) => {
+      exec(`${CONTAINER_CMD} stop ${containerName}`, { timeout: 15000 }, (err) => {
         if (err) {
           logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
           container.kill('SIGKILL');

@@ -4,7 +4,7 @@ Personal Claude assistant. See [README.md](README.md) for philosophy and setup. 
 
 ## Quick Context
 
-Single Node.js process that connects to WhatsApp, routes messages to Claude Agent SDK running in Apple Container (Linux VMs). Each group has isolated filesystem and memory.
+Single Node.js process that connects to WhatsApp, routes messages to Claude Agent SDK running in Docker containers (Linux) or Apple Container (macOS). Each group has isolated filesystem and memory.
 
 ## Key Files
 
@@ -19,7 +19,20 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `src/task-scheduler.ts` | Runs scheduled tasks |
 | `src/db.ts` | SQLite operations |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
-| `container/skills/agent-browser.md` | Browser automation tool (available to all agents via Bash) |
+| `container/skills/agent-browser/` | Browser automation skill |
+| `container/skills/send-email/` | Email outreach skill |
+| `container/skills/social-posting/` | Social media posting skill (X, Facebook, LinkedIn) |
+| `container/skills/crm-query/` | CRM query/import skill |
+| `container/skills/outreach-workflow/` | End-to-end outreach workflow |
+| `container/skills/content-creation/` | Brand voice and content guidelines |
+| `tools/email/send-email.ts` | SMTP email sender |
+| `tools/social/post-tweet.ts` | X/Twitter API poster |
+| `tools/social/post-facebook.ts` | Facebook Graph API poster |
+| `tools/social/post-linkedin.ts` | LinkedIn API poster |
+| `tools/crm/import-apollo.ts` | Apollo.io CSV lead importer |
+| `tools/crm/query-contacts.ts` | CRM contact query utility |
+| `deploy/setup-vps.sh` | VPS hardening and installation script |
+| `deploy/nanoclaw.service` | systemd service file |
 
 ## Skills
 
@@ -39,10 +52,17 @@ npm run build        # Compile TypeScript
 ./container/build.sh # Rebuild agent container
 ```
 
-Service management:
+Service management (macOS):
 ```bash
 launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
 launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
+```
+
+Service management (Linux / Contabo VPS):
+```bash
+sudo systemctl start nanoclaw
+sudo systemctl stop nanoclaw
+sudo journalctl -u nanoclaw -f  # View logs
 ```
 
 ## Container Build Cache

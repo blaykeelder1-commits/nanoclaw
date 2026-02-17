@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
-import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
+import { Campaign, Contact, NewMessage, OutreachLog, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
 
 let db: Database.Database;
 
@@ -72,6 +72,53 @@ function createSchema(database: Database.Database): void {
       added_at TEXT NOT NULL,
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS contacts (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL,
+      company TEXT,
+      title TEXT,
+      linkedin_url TEXT,
+      phone TEXT,
+      source TEXT NOT NULL DEFAULT 'manual',
+      tags TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email);
+    CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(company);
+    CREATE INDEX IF NOT EXISTS idx_contacts_source ON contacts(source);
+
+    CREATE TABLE IF NOT EXISTS outreach_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      contact_id TEXT NOT NULL,
+      campaign_id TEXT,
+      type TEXT NOT NULL,
+      subject TEXT,
+      body TEXT,
+      status TEXT NOT NULL DEFAULT 'sent',
+      sent_at TEXT NOT NULL,
+      response_at TEXT,
+      error TEXT,
+      FOREIGN KEY (contact_id) REFERENCES contacts(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_outreach_contact ON outreach_log(contact_id);
+    CREATE INDEX IF NOT EXISTS idx_outreach_campaign ON outreach_log(campaign_id);
+    CREATE INDEX IF NOT EXISTS idx_outreach_status ON outreach_log(status);
+
+    CREATE TABLE IF NOT EXISTS campaigns (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      template_subject TEXT,
+      template_body TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
   `);
 
@@ -547,6 +594,179 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- CRM accessors ---
+
+export function upsertContact(contact: Contact): void {
+  db.prepare(
+    `INSERT INTO contacts (id, email, first_name, last_name, company, title, linkedin_url, phone, source, tags, notes, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(email) DO UPDATE SET
+       first_name = excluded.first_name,
+       last_name = excluded.last_name,
+       company = excluded.company,
+       title = excluded.title,
+       linkedin_url = COALESCE(excluded.linkedin_url, linkedin_url),
+       phone = COALESCE(excluded.phone, phone),
+       tags = excluded.tags,
+       notes = excluded.notes,
+       updated_at = excluded.updated_at`,
+  ).run(
+    contact.id,
+    contact.email,
+    contact.first_name,
+    contact.last_name,
+    contact.company,
+    contact.title,
+    contact.linkedin_url,
+    contact.phone,
+    contact.source,
+    contact.tags,
+    contact.notes,
+    contact.created_at,
+    contact.updated_at,
+  );
+}
+
+export function getContact(id: string): Contact | undefined {
+  return db.prepare('SELECT * FROM contacts WHERE id = ?').get(id) as Contact | undefined;
+}
+
+export function getContactByEmail(email: string): Contact | undefined {
+  return db.prepare('SELECT * FROM contacts WHERE email = ?').get(email) as Contact | undefined;
+}
+
+export function searchContacts(query: string, limit = 50): Contact[] {
+  return db
+    .prepare(
+      `SELECT * FROM contacts
+       WHERE first_name LIKE ? OR last_name LIKE ? OR company LIKE ? OR email LIKE ?
+       ORDER BY updated_at DESC LIMIT ?`,
+    )
+    .all(`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`, limit) as Contact[];
+}
+
+export function getUncontactedLeads(limit = 10): Contact[] {
+  return db
+    .prepare(
+      `SELECT c.* FROM contacts c
+       LEFT JOIN outreach_log o ON c.id = o.contact_id
+       WHERE o.id IS NULL
+       ORDER BY c.created_at ASC LIMIT ?`,
+    )
+    .all(limit) as Contact[];
+}
+
+export function getLeadsNeedingFollowUp(daysSince = 3, limit = 10): Contact[] {
+  const cutoff = new Date(Date.now() - daysSince * 86400000).toISOString();
+  return db
+    .prepare(
+      `SELECT c.* FROM contacts c
+       INNER JOIN outreach_log o ON c.id = o.contact_id
+       WHERE o.status = 'sent' AND o.sent_at < ?
+         AND NOT EXISTS (
+           SELECT 1 FROM outreach_log o2
+           WHERE o2.contact_id = c.id AND o2.status IN ('replied', 'bounced')
+         )
+       GROUP BY c.id
+       ORDER BY MAX(o.sent_at) ASC LIMIT ?`,
+    )
+    .all(cutoff, limit) as Contact[];
+}
+
+export function logOutreach(log: OutreachLog): void {
+  db.prepare(
+    `INSERT INTO outreach_log (contact_id, campaign_id, type, subject, body, status, sent_at, response_at, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    log.contact_id,
+    log.campaign_id,
+    log.type,
+    log.subject,
+    log.body,
+    log.status,
+    log.sent_at,
+    log.response_at,
+    log.error,
+  );
+}
+
+export function getOutreachForContact(contactId: string): OutreachLog[] {
+  return db
+    .prepare('SELECT * FROM outreach_log WHERE contact_id = ? ORDER BY sent_at DESC')
+    .all(contactId) as OutreachLog[];
+}
+
+export function getOutreachStats(): {
+  total_sent: number;
+  total_replied: number;
+  total_bounced: number;
+  sent_today: number;
+  sent_this_week: number;
+} {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const weekAgo = new Date(Date.now() - 7 * 86400000);
+
+  const total = db
+    .prepare(
+      `SELECT
+         COUNT(*) as total_sent,
+         SUM(CASE WHEN status = 'replied' THEN 1 ELSE 0 END) as total_replied,
+         SUM(CASE WHEN status = 'bounced' THEN 1 ELSE 0 END) as total_bounced
+       FROM outreach_log`,
+    )
+    .get() as { total_sent: number; total_replied: number; total_bounced: number };
+
+  const sentToday = db
+    .prepare('SELECT COUNT(*) as count FROM outreach_log WHERE sent_at >= ?')
+    .get(today.toISOString()) as { count: number };
+
+  const sentWeek = db
+    .prepare('SELECT COUNT(*) as count FROM outreach_log WHERE sent_at >= ?')
+    .get(weekAgo.toISOString()) as { count: number };
+
+  return {
+    ...total,
+    sent_today: sentToday.count,
+    sent_this_week: sentWeek.count,
+  };
+}
+
+export function upsertCampaign(campaign: Campaign): void {
+  db.prepare(
+    `INSERT INTO campaigns (id, name, description, status, template_subject, template_body, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       description = excluded.description,
+       status = excluded.status,
+       template_subject = excluded.template_subject,
+       template_body = excluded.template_body,
+       updated_at = excluded.updated_at`,
+  ).run(
+    campaign.id,
+    campaign.name,
+    campaign.description,
+    campaign.status,
+    campaign.template_subject,
+    campaign.template_body,
+    campaign.created_at,
+    campaign.updated_at,
+  );
+}
+
+export function getCampaign(id: string): Campaign | undefined {
+  return db.prepare('SELECT * FROM campaigns WHERE id = ?').get(id) as Campaign | undefined;
+}
+
+export function getAllCampaigns(): Campaign[] {
+  return db.prepare('SELECT * FROM campaigns ORDER BY created_at DESC').all() as Campaign[];
+}
+
+export function getContactCount(): number {
+  return (db.prepare('SELECT COUNT(*) as count FROM contacts').get() as { count: number }).count;
 }
 
 // --- JSON migration ---

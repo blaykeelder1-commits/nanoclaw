@@ -12,12 +12,18 @@ TAG="${1:-latest}"
 echo "Building NanoClaw agent container image..."
 echo "Image: ${IMAGE_NAME}:${TAG}"
 
-# Build with Apple Container
-container build -t "${IMAGE_NAME}:${TAG}" .
+# Use docker on Linux, Apple Container on macOS
+if [[ "$(uname)" == "Linux" ]]; then
+  BUILD_CMD="docker"
+else
+  BUILD_CMD="container"
+fi
+
+$BUILD_CMD build -t "${IMAGE_NAME}:${TAG}" .
 
 echo ""
 echo "Build complete!"
 echo "Image: ${IMAGE_NAME}:${TAG}"
 echo ""
 echo "Test with:"
-echo "  echo '{\"prompt\":\"What is 2+2?\",\"groupFolder\":\"test\",\"chatJid\":\"test@g.us\",\"isMain\":false}' | container run -i ${IMAGE_NAME}:${TAG}"
+echo "  echo '{\"prompt\":\"What is 2+2?\",\"groupFolder\":\"test\",\"chatJid\":\"test@g.us\",\"isMain\":false}' | $BUILD_CMD run -i ${IMAGE_NAME}:${TAG}"

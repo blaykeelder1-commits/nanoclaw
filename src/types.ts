@@ -76,6 +76,48 @@ export interface TaskRunLog {
   error: string | null;
 }
 
+// --- CRM types ---
+
+export interface Contact {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  company: string | null;
+  title: string | null;
+  linkedin_url: string | null;
+  phone: string | null;
+  source: string; // e.g. 'apollo', 'manual'
+  tags: string | null; // JSON array
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OutreachLog {
+  id?: number;
+  contact_id: string;
+  campaign_id: string | null;
+  type: 'email' | 'linkedin' | 'twitter' | 'facebook';
+  subject: string | null;
+  body: string | null;
+  status: 'sent' | 'delivered' | 'opened' | 'replied' | 'bounced' | 'failed';
+  sent_at: string;
+  response_at: string | null;
+  error: string | null;
+}
+
+export interface Campaign {
+  id: string;
+  name: string;
+  description: string | null;
+  status: 'draft' | 'active' | 'paused' | 'completed';
+  template_subject: string | null;
+  template_body: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // --- Channel abstraction ---
 
 export interface Channel {

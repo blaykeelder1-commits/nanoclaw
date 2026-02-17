@@ -1,0 +1,33 @@
+[Unit]
+Description=NanoClaw AI Assistant
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=nanoclaw
+Group=nanoclaw
+WorkingDirectory=/home/nanoclaw/nanoclaw
+ExecStart=/usr/bin/node --import tsx/esm src/index.ts
+Restart=always
+RestartSec=10
+
+# Environment
+Environment=NODE_ENV=production
+Environment=LOG_LEVEL=info
+
+# Resource limits
+MemoryMax=2G
+CPUQuota=80%
+
+# Security
+NoNewPrivileges=false
+ProtectSystem=false
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nanoclaw
+
+[Install]
+WantedBy=multi-user.target
