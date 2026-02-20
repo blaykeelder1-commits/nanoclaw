@@ -63,6 +63,8 @@ export class WhatsAppChannel implements Channel {
       printQRInTerminal: false,
       logger,
       browser: Browsers.macOS('Chrome'),
+      fireInitQueries: true,
+      markOnlineOnConnect: true,
     });
 
     this.sock.ev.on('connection.update', (update) => {
