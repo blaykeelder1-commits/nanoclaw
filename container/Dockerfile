@@ -32,8 +32,8 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Install agent-browser, claude-code, and tool dependencies globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code tsx typescript
 
-# Install tool dependencies (nodemailer for email, better-sqlite3 for CRM queries)
-RUN npm install -g nodemailer better-sqlite3 @types/nodemailer @types/better-sqlite3
+# Install tool dependencies (nodemailer for email, better-sqlite3 for CRM queries, googleapis for Sheets)
+RUN npm install -g nodemailer better-sqlite3 @types/nodemailer @types/better-sqlite3 googleapis
 
 # Create app directory
 WORKDIR /app

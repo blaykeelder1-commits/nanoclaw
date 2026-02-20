@@ -142,6 +142,10 @@ SMTP_FROM=Your Name <outreach@yourdomain.com>
 # LINKEDIN_ACCESS_TOKEN=
 # LINKEDIN_PERSON_URN=urn:li:person:XXXXX
 
+# Google Sheets Integration
+# GOOGLE_SPREADSHEET_ID=your-spreadsheet-id-from-url
+# GOOGLE_SERVICE_ACCOUNT_KEY={"type":"service_account","project_id":"...","private_key":"...","client_email":"..."}
+
 # Optional: timezone for scheduled tasks (default: system timezone)
 # TZ=America/New_York
 ENVEOF

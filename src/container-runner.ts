@@ -200,6 +200,8 @@ function readSecrets(): Record<string, string> {
     'FB_PAGE_ID', 'FB_PAGE_ACCESS_TOKEN',
     // LinkedIn
     'LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_PERSON_URN',
+    // Google Sheets
+    'GOOGLE_SERVICE_ACCOUNT_KEY', 'GOOGLE_SPREADSHEET_ID',
   ]);
 }
 

@@ -25,12 +25,15 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `container/skills/crm-query/` | CRM query/import skill |
 | `container/skills/outreach-workflow/` | End-to-end outreach workflow |
 | `container/skills/content-creation/` | Brand voice and content guidelines |
+| `container/skills/google-sheets/` | Google Sheets read/write/append |
+| `container/skills/vending-inventory/` | Vending machine sales + inventory automation |
 | `tools/email/send-email.ts` | SMTP email sender |
 | `tools/social/post-tweet.ts` | X/Twitter API poster |
 | `tools/social/post-facebook.ts` | Facebook Graph API poster |
 | `tools/social/post-linkedin.ts` | LinkedIn API poster |
 | `tools/crm/import-apollo.ts` | Apollo.io CSV lead importer |
 | `tools/crm/query-contacts.ts` | CRM contact query utility |
+| `tools/sheets/sheets.ts` | Google Sheets API tool |
 | `deploy/setup-vps.sh` | VPS hardening and installation script |
 | `deploy/nanoclaw.service` | systemd service file |
 
