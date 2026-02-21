@@ -209,6 +209,8 @@ function readSecrets(): Record<string, string> {
     'LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_PERSON_URN',
     // Google Sheets
     'GOOGLE_SERVICE_ACCOUNT_KEY', 'GOOGLE_SPREADSHEET_ID',
+    // Google Calendar
+    'GOOGLE_CALENDAR_ID',
   ]);
 }
 
