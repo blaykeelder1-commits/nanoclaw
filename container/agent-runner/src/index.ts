@@ -27,6 +27,7 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
+  outputNonce?: string;
 }
 
 interface ContainerOutput {
@@ -104,8 +105,15 @@ async function readStdin(): Promise<string> {
   });
 }
 
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+// Markers are computed from the per-run nonce passed in ContainerInput.
+// Falls back to 'DEFAULT' for backwards compat with older hosts.
+let OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_DEFAULT_START---';
+let OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_DEFAULT_END---';
+
+function initMarkers(nonce: string): void {
+  OUTPUT_START_MARKER = `---NANOCLAW_OUTPUT_${nonce}_START---`;
+  OUTPUT_END_MARKER = `---NANOCLAW_OUTPUT_${nonce}_END---`;
+}
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
@@ -186,8 +194,16 @@ function createPreCompactHook(): HookCallback {
 
 // Secrets to strip from Bash tool subprocess environments.
 // These are needed by claude-code for API auth but should never
-// be visible to commands Kit runs.
-const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+// be visible to commands the agent runs.
+// NOTE: This list must stay in sync with readSecrets() in src/container-runner.ts.
+const SECRET_ENV_VARS = [
+  'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN',
+  'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM',
+  'X_API_KEY', 'X_API_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_SECRET',
+  'FB_PAGE_ID', 'FB_PAGE_ACCESS_TOKEN',
+  'LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_PERSON_URN',
+  'GOOGLE_SERVICE_ACCOUNT_KEY', 'GOOGLE_SPREADSHEET_ID',
+];
 
 function createSanitizeBashHook(): HookCallback {
   return async (input, _toolUseId, _context) => {
@@ -497,6 +513,9 @@ async function main(): Promise<void> {
     containerInput = JSON.parse(stdinData);
     // Delete the temp file the entrypoint wrote — it contains secrets
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
+    if (containerInput.outputNonce) {
+      initMarkers(containerInput.outputNonce);
+    }
     log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {
     writeOutput({

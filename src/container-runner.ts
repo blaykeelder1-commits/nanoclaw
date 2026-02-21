@@ -3,6 +3,7 @@
  * Spawns agent execution in Apple Container and handles IPC
  */
 import { ChildProcess, exec, spawn } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -23,9 +24,14 @@ import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
-// Sentinel markers for robust output parsing (must match agent-runner)
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+// Sentinel markers for robust output parsing (must match agent-runner).
+// A random nonce is generated per-run so agent output cannot inject these markers.
+function makeMarkers(nonce: string) {
+  return {
+    start: `---NANOCLAW_OUTPUT_${nonce}_START---`,
+    end: `---NANOCLAW_OUTPUT_${nonce}_END---`,
+  };
+}
 
 function getHomeDir(): string {
   const home = process.env.HOME || os.homedir();
@@ -45,6 +51,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
+  outputNonce?: string;
 }
 
 export interface ContainerOutput {
@@ -208,6 +215,12 @@ function readSecrets(): Record<string, string> {
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
+  // Docker: drop all capabilities and prevent privilege escalation.
+  // Apple Container is VM-based (inherently isolated), so these flags are not needed.
+  if (CONTAINER_CMD === 'docker') {
+    args.push('--cap-drop=ALL', '--no-new-privileges');
+  }
+
   // Apple Container: --mount for readonly, -v for read-write
   for (const mount of mounts) {
     if (mount.readonly) {
@@ -232,6 +245,11 @@ export async function runContainerAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
+
+  // Generate per-run nonce for output markers to prevent injection
+  const outputNonce = crypto.randomBytes(16).toString('hex');
+  const { start: OUTPUT_START_MARKER, end: OUTPUT_END_MARKER } = makeMarkers(outputNonce);
+  input.outputNonce = outputNonce;
 
   const groupDir = path.join(GROUPS_DIR, group.folder);
   fs.mkdirSync(groupDir, { recursive: true });

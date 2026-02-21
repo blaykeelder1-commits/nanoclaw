@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 
-// Sentinel markers must match container-runner.ts
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+// Dynamic markers — nonce is extracted from stdin after runContainerAgent writes it
+let OUTPUT_START_MARKER = '';
+let OUTPUT_END_MARKER = '';
 
 // Mock config
 vi.mock('./config.js', () => ({
@@ -98,6 +98,24 @@ const testInput = {
   isMain: false,
 };
 
+/**
+ * Extract the outputNonce from stdin data written by runContainerAgent,
+ * then set the dynamic markers accordingly.
+ */
+function captureNonceFromStdin(proc: ReturnType<typeof createFakeProcess>): void {
+  const chunks: Buffer[] = [];
+  proc.stdin.on('data', (chunk: Buffer) => chunks.push(chunk));
+  proc.stdin.on('end', () => {
+    const data = Buffer.concat(chunks).toString();
+    try {
+      const parsed = JSON.parse(data);
+      const nonce = parsed.outputNonce || 'DEFAULT';
+      OUTPUT_START_MARKER = `---NANOCLAW_OUTPUT_${nonce}_START---`;
+      OUTPUT_END_MARKER = `---NANOCLAW_OUTPUT_${nonce}_END---`;
+    } catch { /* ignore */ }
+  });
+}
+
 function emitOutputMarker(proc: ReturnType<typeof createFakeProcess>, output: ContainerOutput) {
   const json = JSON.stringify(output);
   proc.stdout.push(`${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`);
@@ -114,6 +132,7 @@ describe('container-runner timeout behavior', () => {
   });
 
   it('timeout after output resolves as success', async () => {
+    captureNonceFromStdin(fakeProc);
     const onOutput = vi.fn(async () => {});
     const resultPromise = runContainerAgent(
       testGroup,
@@ -121,6 +140,9 @@ describe('container-runner timeout behavior', () => {
       () => {},
       onOutput,
     );
+
+    // Let stdin write + nonce capture settle
+    await vi.advanceTimersByTimeAsync(10);
 
     // Emit output with a result
     emitOutputMarker(fakeProc, {
@@ -150,6 +172,7 @@ describe('container-runner timeout behavior', () => {
   });
 
   it('timeout with no output resolves as error', async () => {
+    captureNonceFromStdin(fakeProc);
     const onOutput = vi.fn(async () => {});
     const resultPromise = runContainerAgent(
       testGroup,
@@ -173,6 +196,7 @@ describe('container-runner timeout behavior', () => {
   });
 
   it('normal exit after output resolves as success', async () => {
+    captureNonceFromStdin(fakeProc);
     const onOutput = vi.fn(async () => {});
     const resultPromise = runContainerAgent(
       testGroup,
@@ -180,6 +204,9 @@ describe('container-runner timeout behavior', () => {
       () => {},
       onOutput,
     );
+
+    // Let stdin write + nonce capture settle
+    await vi.advanceTimersByTimeAsync(10);
 
     // Emit output
     emitOutputMarker(fakeProc, {
