@@ -70,7 +70,7 @@ function parseArgs(): Args {
   };
 }
 
-function getAuth(): { auth: ReturnType<typeof google.auth.fromJSON>; spreadsheetId: string } {
+function getAuth(): { auth: InstanceType<typeof google.auth.JWT>; spreadsheetId: string } {
   const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
   const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
 
@@ -100,21 +100,17 @@ function getAuth(): { auth: ReturnType<typeof google.auth.fromJSON>; spreadsheet
     process.exit(1);
   }
 
-  const auth = google.auth.fromJSON({
-    type: 'service_account',
-    client_email: key.client_email,
-    private_key: key.private_key,
-    project_id: key.project_id,
-    token_uri: 'https://oauth2.googleapis.com/token',
-  }) as InstanceType<typeof google.auth.JWT>;
-
-  auth.scopes = ['https://www.googleapis.com/auth/spreadsheets'];
+  const auth = new google.auth.JWT({
+    email: key.client_email,
+    key: key.private_key,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
 
   return { auth, spreadsheetId };
 }
 
-function getSheets(auth: ReturnType<typeof google.auth.fromJSON>): sheets_v4.Sheets {
-  return google.sheets({ version: 'v4', auth: auth as any });
+function getSheets(auth: InstanceType<typeof google.auth.JWT>): sheets_v4.Sheets {
+  return google.sheets({ version: 'v4', auth });
 }
 
 async function readRange(sheets: sheets_v4.Sheets, spreadsheetId: string, range: string) {
