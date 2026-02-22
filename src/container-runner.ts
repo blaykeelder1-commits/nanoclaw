@@ -220,7 +220,7 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string): strin
   // Docker: drop all capabilities and prevent privilege escalation.
   // Apple Container is VM-based (inherently isolated), so these flags are not needed.
   if (CONTAINER_CMD === 'docker') {
-    args.push('--cap-drop=ALL', '--no-new-privileges');
+    args.push('--cap-drop=ALL', '--security-opt=no-new-privileges');
   }
 
   // Apple Container: --mount for readonly, -v for read-write
