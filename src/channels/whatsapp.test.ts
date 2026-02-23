@@ -508,10 +508,10 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
-      // Still delivered but with empty content
+      // Voice messages now attempt transcription; download fails in test = fallback message
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
-        expect.objectContaining({ content: '' }),
+        expect.objectContaining({ content: '[Voice message — download failed]' }),
       );
     });
 

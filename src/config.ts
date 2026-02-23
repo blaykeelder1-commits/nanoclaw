@@ -5,7 +5,12 @@ import { readEnvFile } from './env.js';
 // Read config values from .env (falls back to process.env).
 // Secrets are NOT read here — they stay on disk and are loaded only
 // where needed (container-runner.ts) to avoid leaking to child processes.
-const envConfig = readEnvFile(['ASSISTANT_NAME', 'ASSISTANT_HAS_OWN_NUMBER']);
+const envConfig = readEnvFile([
+  'ASSISTANT_NAME', 'ASSISTANT_HAS_OWN_NUMBER',
+  'QUO_API_KEY', 'QUO_SNAK_PHONE_ID', 'QUO_SNAK_NUMBER',
+  'QUO_SHERIDAN_PHONE_ID', 'QUO_SHERIDAN_NUMBER', 'QUO_WEBHOOK_PORT',
+  'GROQ_API_KEY',
+]);
 
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
@@ -63,3 +68,23 @@ export const TRIGGER_PATTERN = new RegExp(
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+// --- Quo Phone (OpenPhone) SMS Channel ---
+export const QUO_API_KEY =
+  process.env.QUO_API_KEY || envConfig.QUO_API_KEY || '';
+export const QUO_SNAK_PHONE_ID =
+  process.env.QUO_SNAK_PHONE_ID || envConfig.QUO_SNAK_PHONE_ID || '';
+export const QUO_SNAK_NUMBER =
+  process.env.QUO_SNAK_NUMBER || envConfig.QUO_SNAK_NUMBER || '+16822551033';
+export const QUO_SHERIDAN_PHONE_ID =
+  process.env.QUO_SHERIDAN_PHONE_ID || envConfig.QUO_SHERIDAN_PHONE_ID || '';
+export const QUO_SHERIDAN_NUMBER =
+  process.env.QUO_SHERIDAN_NUMBER || envConfig.QUO_SHERIDAN_NUMBER || '+18175871460';
+export const QUO_WEBHOOK_PORT = parseInt(
+  process.env.QUO_WEBHOOK_PORT || envConfig.QUO_WEBHOOK_PORT || '3100',
+  10,
+);
+
+// --- Groq (voice transcription) ---
+export const GROQ_API_KEY =
+  process.env.GROQ_API_KEY || envConfig.GROQ_API_KEY || '';

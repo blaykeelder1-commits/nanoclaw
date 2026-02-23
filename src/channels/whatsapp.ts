@@ -5,18 +5,20 @@ import path from 'path';
 import makeWASocket, {
   Browsers,
   DisconnectReason,
+  downloadMediaMessage,
   WASocket,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
-import { ASSISTANT_HAS_OWN_NUMBER, ASSISTANT_NAME, STORE_DIR } from '../config.js';
+import { ASSISTANT_HAS_OWN_NUMBER, ASSISTANT_NAME, GROUPS_DIR, STORE_DIR } from '../config.js';
 import {
   getLastGroupSync,
   setLastGroupSync,
   updateChatName,
 } from '../db.js';
 import { logger } from '../logger.js';
+import { isVoiceMessage, transcribeAudio } from '../transcription.js';
 import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -163,16 +165,66 @@ export class WhatsAppChannel implements Channel {
         // Only deliver full message for registered groups
         const groups = this.opts.registeredGroups();
         if (groups[chatJid]) {
-          const content =
+          let content =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
             msg.message?.imageMessage?.caption ||
             msg.message?.videoMessage?.caption ||
             '';
+
           const sender = msg.key.participant || msg.key.remoteJid || '';
           const senderName = msg.pushName || sender.split('@')[0];
-
           const fromMe = msg.key.fromMe || false;
+          const group = groups[chatJid];
+
+          // Voice message transcription
+          if (isVoiceMessage(msg)) {
+            try {
+              const buffer = await downloadMediaMessage(msg, 'buffer', {}) as Buffer;
+              const transcript = await transcribeAudio(buffer, 'audio/ogg');
+              if (transcript) {
+                content = `[Voice: ${transcript}]`;
+              } else {
+                content = '[Voice message — transcription unavailable]';
+              }
+            } catch (err) {
+              logger.debug({ err }, 'Failed to download voice message');
+              content = '[Voice message — download failed]';
+            }
+          }
+
+          // Image message: download and save to group media folder
+          if (msg.message?.imageMessage && !content) {
+            try {
+              const buffer = await downloadMediaMessage(msg, 'buffer', {}) as Buffer;
+              const mediaDir = path.join(GROUPS_DIR, group.folder, 'media');
+              fs.mkdirSync(mediaDir, { recursive: true });
+              const filename = `img-${Date.now()}.jpg`;
+              fs.writeFileSync(path.join(mediaDir, filename), buffer);
+              const caption = (msg.message.imageMessage as { caption?: string }).caption || '';
+              content = `[Image: /workspace/group/media/${filename}]${caption ? ` ${caption}` : ''}`;
+            } catch (err) {
+              logger.debug({ err }, 'Failed to download image');
+              content = '[Image — download failed]';
+            }
+          }
+
+          // Document message: download and save to group media folder
+          if (msg.message?.documentMessage) {
+            try {
+              const buffer = await downloadMediaMessage(msg, 'buffer', {}) as Buffer;
+              const mediaDir = path.join(GROUPS_DIR, group.folder, 'media');
+              fs.mkdirSync(mediaDir, { recursive: true });
+              const origName = (msg.message.documentMessage as { fileName?: string }).fileName || 'document';
+              const filename = `doc-${Date.now()}-${origName}`;
+              fs.writeFileSync(path.join(mediaDir, filename), buffer);
+              content = `[Document: /workspace/group/media/${filename}]`;
+            } catch (err) {
+              logger.debug({ err }, 'Failed to download document');
+              content = '[Document — download failed]';
+            }
+          }
+
           // Detect bot messages: with own number, fromMe is reliable
           // since only the bot sends from that number.
           // With shared number, bot messages carry the assistant name prefix

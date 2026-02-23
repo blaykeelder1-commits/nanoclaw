@@ -44,6 +44,7 @@ ufw default allow outgoing
 ufw allow 22/tcp    # SSH
 ufw allow 80/tcp    # HTTP (for future webhooks)
 ufw allow 443/tcp   # HTTPS
+ufw allow 3100/tcp  # Quo Phone webhook (OpenPhone SMS)
 ufw --force enable
 
 echo "[2/8] Enabling fail2ban..."

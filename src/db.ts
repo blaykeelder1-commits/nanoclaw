@@ -120,6 +120,17 @@ function createSchema(database: Database.Database): void {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS usage_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      timestamp TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_group ON usage_log(group_folder);
+    CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_log(timestamp);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -767,6 +778,99 @@ export function getAllCampaigns(): Campaign[] {
 
 export function getContactCount(): number {
   return (db.prepare('SELECT COUNT(*) as count FROM contacts').get() as { count: number }).count;
+}
+
+// --- CRM: auto-create contacts from phone numbers ---
+
+/**
+ * Create or update a contact from a phone number (e.g., inbound SMS).
+ * Uses a placeholder email derived from the phone number to satisfy
+ * the UNIQUE constraint without requiring a real email address.
+ */
+export function upsertContactFromPhone(
+  phone: string,
+  source: string,
+  tags: string[],
+): void {
+  const now = new Date().toISOString();
+  const cleanPhone = phone.replace(/[^+\d]/g, '');
+  const placeholderEmail = `${cleanPhone}@sms.nanoclaw`;
+  const id = `phone-${cleanPhone}`;
+
+  db.prepare(
+    `INSERT INTO contacts (id, email, first_name, last_name, company, title, linkedin_url, phone, source, tags, notes, created_at, updated_at)
+     VALUES (?, ?, ?, '', NULL, NULL, NULL, ?, ?, ?, NULL, ?, ?)
+     ON CONFLICT(email) DO UPDATE SET
+       phone = COALESCE(excluded.phone, phone),
+       source = excluded.source,
+       tags = CASE WHEN excluded.tags IS NOT NULL THEN excluded.tags ELSE tags END,
+       updated_at = excluded.updated_at`,
+  ).run(
+    id,
+    placeholderEmail,
+    cleanPhone, // first_name = phone number as placeholder
+    cleanPhone,
+    source,
+    tags.length > 0 ? JSON.stringify(tags) : null,
+    now,
+    now,
+  );
+}
+
+// --- Usage log accessors ---
+
+export interface UsageEntry {
+  group_folder: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  timestamp: string;
+}
+
+export function logUsage(entry: UsageEntry): void {
+  db.prepare(
+    `INSERT INTO usage_log (group_folder, input_tokens, output_tokens, cache_read_tokens, timestamp)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(
+    entry.group_folder,
+    entry.input_tokens,
+    entry.output_tokens,
+    entry.cache_read_tokens,
+    entry.timestamp,
+  );
+}
+
+export function getUsageStats(groupFolder?: string, sinceDays = 30): {
+  total_input: number;
+  total_output: number;
+  total_cache_read: number;
+  count: number;
+} {
+  const cutoff = new Date(Date.now() - sinceDays * 86400000).toISOString();
+
+  if (groupFolder) {
+    return db.prepare(
+      `SELECT
+        COALESCE(SUM(input_tokens), 0) as total_input,
+        COALESCE(SUM(output_tokens), 0) as total_output,
+        COALESCE(SUM(cache_read_tokens), 0) as total_cache_read,
+        COUNT(*) as count
+       FROM usage_log WHERE group_folder = ? AND timestamp >= ?`,
+    ).get(groupFolder, cutoff) as {
+      total_input: number; total_output: number; total_cache_read: number; count: number;
+    };
+  }
+
+  return db.prepare(
+    `SELECT
+      COALESCE(SUM(input_tokens), 0) as total_input,
+      COALESCE(SUM(output_tokens), 0) as total_output,
+      COALESCE(SUM(cache_read_tokens), 0) as total_cache_read,
+      COUNT(*) as count
+     FROM usage_log WHERE timestamp >= ?`,
+  ).get(cutoff) as {
+    total_input: number; total_output: number; total_cache_read: number; count: number;
+  };
 }
 
 // --- JSON migration ---

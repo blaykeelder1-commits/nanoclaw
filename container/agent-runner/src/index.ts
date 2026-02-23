@@ -35,6 +35,11 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+  };
 }
 
 interface SessionEntry {
@@ -406,6 +411,8 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  // Accumulate token usage from SDK messages
+  const usage = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 };
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
@@ -477,6 +484,13 @@ async function runQuery(
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+      // Extract token usage from assistant messages
+      const msgUsage = (message as { usage?: { input_tokens?: number; output_tokens?: number; cache_read_tokens?: number } }).usage;
+      if (msgUsage) {
+        usage.input_tokens += msgUsage.input_tokens || 0;
+        usage.output_tokens += msgUsage.output_tokens || 0;
+        usage.cache_read_tokens += msgUsage.cache_read_tokens || 0;
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {
@@ -496,7 +510,8 @@ async function runQuery(
       writeOutput({
         status: 'success',
         result: textResult || null,
-        newSessionId
+        newSessionId,
+        usage: (usage.input_tokens > 0 || usage.output_tokens > 0) ? { ...usage } : undefined,
       });
     }
   }

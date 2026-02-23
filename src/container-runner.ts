@@ -19,6 +19,7 @@ import {
 
 // Use 'docker' on Linux, 'container' (Apple Container) on macOS
 const CONTAINER_CMD = os.platform() === 'linux' ? 'docker' : 'container';
+import { logUsage } from './db.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -59,6 +60,11 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+  };
 }
 
 interface VolumeMount {
@@ -169,15 +175,6 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Mount agent-runner source from host — recompiled on container startup.
-  // Bypasses Apple Container's sticky build cache for code changes.
-  const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
-  mounts.push({
-    hostPath: agentRunnerSrc,
-    containerPath: '/app/src',
-    readonly: true,
-  });
-
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
@@ -211,6 +208,10 @@ function readSecrets(): Record<string, string> {
     'GOOGLE_SERVICE_ACCOUNT_KEY', 'GOOGLE_SPREADSHEET_ID',
     // Google Calendar
     'GOOGLE_CALENDAR_ID',
+    // Quo Phone (OpenPhone) — host-side only, not passed to container
+    // 'QUO_API_KEY', 'QUO_SNAK_PHONE_ID', 'QUO_SHERIDAN_PHONE_ID',
+    // Groq (voice transcription) — host-side only
+    // 'GROQ_API_KEY',
   ]);
 }
 
@@ -310,6 +311,8 @@ export async function runContainerAgent(
     let parseBuffer = '';
     let newSessionId: string | undefined;
     let outputChain = Promise.resolve();
+    // Accumulate usage across all streamed outputs
+    const accumulatedUsage = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 };
 
     container.stdout.on('data', (data) => {
       const chunk = data.toString();
@@ -346,6 +349,11 @@ export async function runContainerAgent(
             const parsed: ContainerOutput = JSON.parse(jsonStr);
             if (parsed.newSessionId) {
               newSessionId = parsed.newSessionId;
+            }
+            if (parsed.usage) {
+              accumulatedUsage.input_tokens += parsed.usage.input_tokens;
+              accumulatedUsage.output_tokens += parsed.usage.output_tokens;
+              accumulatedUsage.cache_read_tokens += parsed.usage.cache_read_tokens;
             }
             hadStreamingOutput = true;
             // Activity detected — reset the hard timeout
@@ -540,8 +548,20 @@ export async function runContainerAgent(
       // Streaming mode: wait for output chain to settle, return completion marker
       if (onOutput) {
         outputChain.then(() => {
+          // Log accumulated token usage
+          if (accumulatedUsage.input_tokens > 0 || accumulatedUsage.output_tokens > 0) {
+            try {
+              logUsage({
+                group_folder: input.groupFolder,
+                ...accumulatedUsage,
+                timestamp: new Date().toISOString(),
+              });
+            } catch (err) {
+              logger.debug({ err }, 'Failed to log usage');
+            }
+          }
           logger.info(
-            { group: group.name, duration, newSessionId },
+            { group: group.name, duration, newSessionId, usage: accumulatedUsage },
             'Container completed (streaming mode)',
           );
           resolve({
