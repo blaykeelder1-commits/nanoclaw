@@ -33,7 +33,7 @@ else
   echo "PermitRootLogin prohibit-password" >> "$SSHD_CONFIG"
 fi
 
-systemctl restart sshd
+systemctl restart sshd 2>/dev/null || systemctl restart ssh
 
 echo "[2/8] Configuring UFW firewall..."
 apt-get update -qq

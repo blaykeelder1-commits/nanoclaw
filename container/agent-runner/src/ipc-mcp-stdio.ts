@@ -115,7 +115,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       const date = new Date(args.schedule_value);
       if (isNaN(date.getTime())) {
         return {
-          content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}". Use ISO 8601 format like "2026-02-01T15:30:00.000Z".` }],
+          content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}". Use local ISO 8601 format like "2026-02-01T15:30:00" (no Z suffix).` }],
           isError: true,
         };
       }
@@ -248,6 +248,7 @@ Use available_groups.json to find the JID for a group. The folder name should be
     name: z.string().describe('Display name for the group'),
     folder: z.string().describe('Folder name for group files (lowercase, hyphens, e.g., "family-chat")'),
     trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
+    requires_trigger: z.boolean().default(true).describe('Whether messages must start with the trigger word. Set false for solo/personal chats where all messages should be processed.'),
   },
   async (args) => {
     if (!isMain) {
@@ -263,6 +264,7 @@ Use available_groups.json to find the JID for a group. The folder name should be
       name: args.name,
       folder: args.folder,
       trigger: args.trigger,
+      requiresTrigger: args.requires_trigger,
       timestamp: new Date().toISOString(),
     };
 
