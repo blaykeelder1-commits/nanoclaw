@@ -61,11 +61,16 @@ export class QuoChannel implements Channel {
   async connect(): Promise<void> {
     return new Promise((resolve) => {
       this.server = http.createServer((req, res) => {
+        logger.info({ method: req.method, url: req.url }, 'Quo HTTP request received');
         if (req.method === 'POST' && req.url === '/webhook/quo') {
           this.handleWebhook(req, res);
+        } else if (req.method === 'GET' && req.url === '/webhook/quo') {
+          // Some webhook providers do a GET verification check
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end('ok');
         } else {
-          res.writeHead(404);
-          res.end('Not found');
+          res.writeHead(200);
+          res.end('ok');
         }
       });
 
@@ -147,38 +152,41 @@ export class QuoChannel implements Channel {
       res.end('{"ok":true}');
 
       try {
+        logger.debug({ rawBody: body.slice(0, 500) }, 'Quo webhook raw body');
         const payload = JSON.parse(body);
         this.processInbound(payload);
       } catch (err) {
-        logger.error({ err }, 'Failed to parse Quo webhook payload');
+        logger.error({ err, rawBody: body.slice(0, 200) }, 'Failed to parse Quo webhook payload');
       }
     });
   }
 
-  private processInbound(payload: {
-    type?: string;
-    data?: {
-      object?: {
-        direction?: string;
-        from?: string;
-        to?: string;
-        body?: string;
-        phoneNumberId?: string;
-        createdAt?: string;
-        id?: string;
-        conversationId?: string;
-      };
-    };
-  }): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private processInbound(payload: any): void {
+    logger.info({ type: payload.type, hasData: !!payload.data }, 'Quo webhook payload');
+
     // OpenPhone webhook format: { type: "message.received", data: { object: { ... } } }
     if (payload.type !== 'message.received') return;
 
     const msg = payload.data?.object;
-    if (!msg || msg.direction !== 'incoming') return;
+    if (!msg) return;
+
+    logger.info({
+      direction: msg.direction,
+      from: msg.from,
+      to: msg.to,
+      text: msg.text,
+      body: msg.body,
+      phoneNumberId: msg.phoneNumberId,
+    }, 'Quo inbound message details');
+
+    if (msg.direction !== 'incoming') return;
 
     const customerNumber = msg.from;
-    const businessNumber = msg.to;
-    const text = msg.body || '';
+    // Quo API: 'to' can be a string or array
+    const businessNumber = Array.isArray(msg.to) ? msg.to[0] : msg.to;
+    // Quo uses 'text' in API responses but may use 'body' in webhooks — accept both
+    const text = msg.text || msg.body || '';
     if (!customerNumber || !businessNumber || !text) return;
 
     // Determine which business line received this
