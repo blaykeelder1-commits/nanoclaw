@@ -14,7 +14,7 @@ import {
   QUO_SHERIDAN_PHONE_ID,
   QUO_WEBHOOK_PORT,
 } from '../config.js';
-import { upsertContactFromPhone } from '../db.js';
+import { getLastSender, upsertContactFromPhone } from '../db.js';
 import { logger } from '../logger.js';
 import { Channel, NewMessage, OnChatMetadata, OnInboundMessage, RegisteredGroup } from '../types.js';
 
@@ -100,8 +100,14 @@ export class QuoChannel implements Channel {
       return;
     }
 
-    // Find the customer number to reply to
-    const customerNumber = this.lastSenderByJid.get(jid);
+    // Find the customer number to reply to (in-memory first, then DB fallback)
+    let customerNumber = this.lastSenderByJid.get(jid);
+    if (!customerNumber) {
+      customerNumber = getLastSender(jid) ?? undefined;
+      if (customerNumber) {
+        this.lastSenderByJid.set(jid, customerNumber);
+      }
+    }
     if (!customerNumber) {
       logger.warn({ jid }, 'No customer number known for Quo reply');
       return;

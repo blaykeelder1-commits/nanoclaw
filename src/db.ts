@@ -355,6 +355,18 @@ export function getMessagesSince(
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`) as NewMessage[];
 }
 
+/** Get the most recent non-bot sender for a given chat JID. */
+export function getLastSender(chatJid: string): string | null {
+  const row = db
+    .prepare(
+      `SELECT sender FROM messages
+       WHERE chat_jid = ? AND is_bot_message = 0 AND is_from_me = 0
+       ORDER BY timestamp DESC LIMIT 1`,
+    )
+    .get(chatJid) as { sender: string } | undefined;
+  return row?.sender || null;
+}
+
 export function createTask(
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
 ): void {
