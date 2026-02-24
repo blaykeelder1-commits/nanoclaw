@@ -120,11 +120,20 @@ export interface Contact {
   title: string | null;
   linkedin_url: string | null;
   phone: string | null;
-  source: string; // e.g. 'apollo', 'manual'
+  source: string; // e.g. 'apollo', 'manual', 'google_maps'
   tags: string | null; // JSON array
   notes: string | null;
   created_at: string;
   updated_at: string;
+  // Lead generation fields
+  lead_score?: number;
+  lead_score_reasons?: string | null; // JSON array of scoring reasons
+  website?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  google_place_id?: string | null;
+  industry?: string | null;
 }
 
 export interface OutreachLog {

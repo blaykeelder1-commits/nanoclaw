@@ -53,9 +53,9 @@ function parseArgs(): Args {
   return { action, flags };
 }
 
-function getAuth(): { auth: InstanceType<typeof google.auth.JWT>; calendarId: string } {
+function getAuth(flags: Record<string, string>): { auth: InstanceType<typeof google.auth.JWT>; calendarId: string } {
   const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-  const calendarId = process.env.GOOGLE_CALENDAR_ID;
+  const calendarId = flags['calendar-id'] || process.env.GOOGLE_CALENDAR_ID;
 
   if (!keyJson) {
     console.error(JSON.stringify({
@@ -67,7 +67,7 @@ function getAuth(): { auth: InstanceType<typeof google.auth.JWT>; calendarId: st
   if (!calendarId) {
     console.error(JSON.stringify({
       status: 'error',
-      error: 'Missing GOOGLE_CALENDAR_ID environment variable.',
+      error: 'Missing calendar ID. Pass --calendar-id or set GOOGLE_CALENDAR_ID environment variable.',
     }));
     process.exit(1);
   }
@@ -279,7 +279,7 @@ async function freeBusy(
 
 async function main() {
   const { action, flags } = parseArgs();
-  const { auth, calendarId } = getAuth();
+  const { auth, calendarId } = getAuth(flags);
   const cal = getCalendar(auth);
 
   try {

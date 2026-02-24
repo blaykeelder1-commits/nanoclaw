@@ -28,12 +28,19 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `container/skills/google-sheets/` | Google Sheets read/write/append |
 | `container/skills/google-calendar/` | Google Calendar events + availability |
 | `container/skills/vending-inventory/` | Vending machine sales + inventory automation |
+| `container/skills/google-drive/` | Google Drive file access |
+| `container/skills/lead-finder/` | Lead generation (Maps, scraping, scoring) |
 | `tools/email/send-email.ts` | SMTP email sender |
 | `tools/social/post-tweet.ts` | X/Twitter API poster |
 | `tools/social/post-facebook.ts` | Facebook Graph API poster |
 | `tools/social/post-linkedin.ts` | LinkedIn API poster |
 | `tools/crm/import-apollo.ts` | Apollo.io CSV lead importer |
 | `tools/crm/query-contacts.ts` | CRM contact query utility |
+| `tools/crm/lead-score.ts` | Lead scoring engine (0-100) |
+| `tools/crm/scoring-config.json` | Scoring weights config |
+| `tools/drive/drive.ts` | Google Drive list/search/download |
+| `tools/leads/google-maps.ts` | Google Maps Places API lead finder |
+| `tools/leads/website-scraper.ts` | Website email/phone scraper |
 | `tools/sheets/sheets.ts` | Google Sheets API tool |
 | `tools/calendar/calendar.ts` | Google Calendar API tool |
 | `deploy/setup-vps.sh` | VPS hardening and installation script |

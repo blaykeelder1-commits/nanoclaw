@@ -1,7 +1,7 @@
 ---
 name: crm-query
 description: Query the CRM database for contacts, leads, outreach history, and statistics. Use when asked about leads, contacts, outreach stats, or CRM data.
-allowed-tools: Bash(npx tsx /workspace/project/tools/crm/query-contacts.ts *), Bash(npx tsx /workspace/project/tools/crm/import-apollo.ts *), Bash(npx tsx /workspace/project/tools/crm/pipeline.ts *), Bash(npx tsx /workspace/project/tools/crm/unsubscribe.ts *), Bash(npx tsx /workspace/project/tools/crm/pipeline.ts *)
+allowed-tools: Bash(npx tsx /workspace/project/tools/crm/query-contacts.ts *), Bash(npx tsx /workspace/project/tools/crm/import-apollo.ts *), Bash(npx tsx /workspace/project/tools/crm/pipeline.ts *), Bash(npx tsx /workspace/project/tools/crm/unsubscribe.ts *), Bash(npx tsx /workspace/project/tools/crm/lead-score.ts *)
 ---
 
 # CRM Query Tool
@@ -42,10 +42,17 @@ npx tsx /workspace/project/tools/crm/query-contacts.ts get "contact_id"
 npx tsx /workspace/project/tools/crm/query-contacts.ts history "contact_id"
 ```
 
-## Import Apollo CSV
+## Import Apollo Data
 
+### From CSV file
 ```bash
 npx tsx /workspace/project/tools/crm/import-apollo.ts /path/to/export.csv --tags "apollo,batch1"
+```
+
+### Directly from Google Sheets
+```bash
+npx tsx /workspace/project/tools/crm/import-apollo.ts --sheet "14xhjN63ey_kok8EUyawy63nP8Cvt5IlP" --tags "apollo,2026-02"
+npx tsx /workspace/project/tools/crm/import-apollo.ts --sheet "spreadsheet_id" --range "Sheet2" --tags "apollo,batch2"
 ```
 
 Add `--dry-run` to preview without importing.
@@ -132,6 +139,25 @@ npx tsx /workspace/project/tools/crm/unsubscribe.ts --contact-id <id> --reason o
 ```
 
 Contacts marked `do-not-contact` are excluded from follow-up and uncontacted queries.
+
+## Lead Scoring
+
+### Score a single contact
+```bash
+npx tsx /workspace/project/tools/crm/lead-score.ts score --contact-id <id>
+```
+
+### Batch score contacts
+```bash
+npx tsx /workspace/project/tools/crm/lead-score.ts batch --source apollo --limit 100
+```
+
+### Show top uncontacted leads (highest score first)
+```bash
+npx tsx /workspace/project/tools/crm/lead-score.ts top --limit 20
+```
+
+Scores: 80+ = hot, 50-79 = warm, 20-49 = cool, <20 = cold
 
 ## Notes
 

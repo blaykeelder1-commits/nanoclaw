@@ -191,6 +191,19 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Lead generation columns
+  try { database.exec(`ALTER TABLE contacts ADD COLUMN lead_score INTEGER DEFAULT 0`); } catch { /* exists */ }
+  try { database.exec(`ALTER TABLE contacts ADD COLUMN lead_score_reasons TEXT`); } catch { /* exists */ }
+  try { database.exec(`ALTER TABLE contacts ADD COLUMN website TEXT`); } catch { /* exists */ }
+  try { database.exec(`ALTER TABLE contacts ADD COLUMN address TEXT`); } catch { /* exists */ }
+  try { database.exec(`ALTER TABLE contacts ADD COLUMN city TEXT`); } catch { /* exists */ }
+  try { database.exec(`ALTER TABLE contacts ADD COLUMN state TEXT`); } catch { /* exists */ }
+  try { database.exec(`ALTER TABLE contacts ADD COLUMN google_place_id TEXT`); } catch { /* exists */ }
+  try { database.exec(`ALTER TABLE contacts ADD COLUMN industry TEXT`); } catch { /* exists */ }
+
+  // Dedup index for Google Maps leads
+  database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_place_id ON contacts(google_place_id) WHERE google_place_id IS NOT NULL`);
 }
 
 export function initDatabase(): void {
