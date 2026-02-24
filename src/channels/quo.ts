@@ -1,6 +1,6 @@
 /**
  * Quo Phone (OpenPhone) SMS Channel
- * Receives inbound SMS via webhook, sends outbound via OpenPhone API.
+ * Receives inbound SMS via webhook + polling fallback, sends outbound via OpenPhone API.
  * JID format: quo:+1XXXXXXXXXX (the business phone number)
  */
 import http from 'http';
@@ -17,6 +17,9 @@ import {
 import { upsertContactFromPhone } from '../db.js';
 import { logger } from '../logger.js';
 import { Channel, NewMessage, OnChatMetadata, OnInboundMessage, RegisteredGroup } from '../types.js';
+
+const QUO_API_BASE = 'https://api.openphone.com/v1';
+const POLL_INTERVAL_MS = 15_000; // Poll every 15 seconds
 
 export interface QuoChannelOpts {
   onMessage: OnInboundMessage;
@@ -36,12 +39,19 @@ export class QuoChannel implements Channel {
   private server: http.Server | null = null;
   private connected = false;
   private opts: QuoChannelOpts;
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Track last inbound sender per JID so we know who to reply to.
    * Key: quo:+1XXXX (business line JID), Value: customer phone number (+1YYYY)
    */
   private lastSenderByJid = new Map<string, string>();
+
+  /** Track last seen activity ID per conversation to detect new messages. */
+  private lastActivityByConversation = new Map<string, string>();
+
+  /** Track message IDs we've already processed (dedup between webhook and polling). */
+  private processedMessageIds = new Set<string>();
 
   /** Map business number → phoneId for outbound routing. */
   private phoneLines: PhoneLine[] = [];
@@ -59,15 +69,11 @@ export class QuoChannel implements Channel {
   }
 
   async connect(): Promise<void> {
-    return new Promise((resolve) => {
+    // Start webhook server
+    await new Promise<void>((resolve) => {
       this.server = http.createServer((req, res) => {
-        logger.info({ method: req.method, url: req.url }, 'Quo HTTP request received');
         if (req.method === 'POST' && req.url === '/webhook/quo') {
           this.handleWebhook(req, res);
-        } else if (req.method === 'GET' && req.url === '/webhook/quo') {
-          // Some webhook providers do a GET verification check
-          res.writeHead(200, { 'Content-Type': 'text/plain' });
-          res.end('ok');
         } else {
           res.writeHead(200);
           res.end('ok');
@@ -80,6 +86,9 @@ export class QuoChannel implements Channel {
         resolve();
       });
     });
+
+    // Start polling fallback (webhooks are unreliable)
+    this.startPolling();
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
@@ -102,7 +111,7 @@ export class QuoChannel implements Channel {
     const prefixed = `${ASSISTANT_NAME}: ${text}`;
 
     try {
-      const response = await fetch('https://api.openphone.com/v1/messages', {
+      const response = await fetch(`${QUO_API_BASE}/messages`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -136,6 +145,10 @@ export class QuoChannel implements Channel {
 
   async disconnect(): Promise<void> {
     this.connected = false;
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
     if (this.server) {
       await new Promise<void>((resolve) => this.server!.close(() => resolve()));
     }
@@ -143,6 +156,8 @@ export class QuoChannel implements Channel {
 
   // SMS does not support typing indicators
   // setTyping is intentionally not implemented
+
+  // ── Webhook handler ──────────────────────────────────────────────
 
   private handleWebhook(req: http.IncomingMessage, res: http.ServerResponse): void {
     let body = '';
@@ -152,46 +167,137 @@ export class QuoChannel implements Channel {
       res.end('{"ok":true}');
 
       try {
-        logger.debug({ rawBody: body.slice(0, 500) }, 'Quo webhook raw body');
         const payload = JSON.parse(body);
-        this.processInbound(payload);
+        this.processWebhookPayload(payload);
       } catch (err) {
-        logger.error({ err, rawBody: body.slice(0, 200) }, 'Failed to parse Quo webhook payload');
+        logger.error({ err }, 'Failed to parse Quo webhook payload');
       }
     });
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private processInbound(payload: any): void {
-    logger.info({ type: payload.type, hasData: !!payload.data }, 'Quo webhook payload');
-
-    // OpenPhone webhook format: { type: "message.received", data: { object: { ... } } }
+  private processWebhookPayload(payload: any): void {
     if (payload.type !== 'message.received') return;
 
     const msg = payload.data?.object;
-    if (!msg) return;
+    if (!msg || msg.direction !== 'incoming') return;
 
-    logger.info({
-      direction: msg.direction,
-      from: msg.from,
-      to: msg.to,
-      text: msg.text,
-      body: msg.body,
-      phoneNumberId: msg.phoneNumberId,
-    }, 'Quo inbound message details');
+    this.processMessage(msg, 'webhook');
+  }
 
-    if (msg.direction !== 'incoming') return;
+  // ── Polling ──────────────────────────────────────────────────────
+
+  private startPolling(): void {
+    logger.info({ intervalMs: POLL_INTERVAL_MS, lines: this.phoneLines.length }, 'Quo polling started');
+
+    // Initial poll after a short delay
+    setTimeout(() => this.pollAllLines(), 3000);
+
+    this.pollTimer = setInterval(() => this.pollAllLines(), POLL_INTERVAL_MS);
+  }
+
+  private async pollAllLines(): Promise<void> {
+    for (const line of this.phoneLines) {
+      try {
+        await this.pollLine(line);
+      } catch (err) {
+        logger.debug({ err, phone: line.number }, 'Quo poll error');
+      }
+    }
+  }
+
+  private async pollLine(line: PhoneLine): Promise<void> {
+    // Fetch recent conversations for this phone line
+    const url = new URL(`${QUO_API_BASE}/conversations`);
+    url.searchParams.set('phoneNumberId', line.phoneId);
+    url.searchParams.set('maxResults', '10');
+
+    const convRes = await fetch(url.toString(), {
+      headers: { 'Authorization': QUO_API_KEY },
+    });
+
+    if (!convRes.ok) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const convData = await convRes.json() as { data?: any[] };
+    if (!convData.data) return;
+
+    for (const conv of convData.data) {
+      const lastActivityId = conv.lastActivityId;
+      const prevActivityId = this.lastActivityByConversation.get(conv.id);
+
+      // On first run, just record the current state without fetching messages
+      if (!prevActivityId) {
+        this.lastActivityByConversation.set(conv.id, lastActivityId);
+        continue;
+      }
+
+      // If activity hasn't changed, skip
+      if (lastActivityId === prevActivityId) continue;
+
+      // New activity detected — fetch recent messages
+      this.lastActivityByConversation.set(conv.id, lastActivityId);
+
+      const participants: string[] = conv.participants || [];
+      if (participants.length === 0) continue;
+
+      await this.fetchNewMessages(line, participants);
+    }
+  }
+
+  private async fetchNewMessages(line: PhoneLine, participants: string[]): Promise<void> {
+    const url = new URL(`${QUO_API_BASE}/messages`);
+    url.searchParams.set('phoneNumberId', line.phoneId);
+    participants.forEach((p: string, i: number) => {
+      url.searchParams.set(`participants[${i}]`, p);
+    });
+    url.searchParams.set('maxResults', '5');
+
+    const msgRes = await fetch(url.toString(), {
+      headers: { 'Authorization': QUO_API_KEY },
+    });
+
+    if (!msgRes.ok) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const msgData = await msgRes.json() as { data?: any[] };
+    if (!msgData.data) return;
+
+    // Process messages in chronological order (API returns newest first)
+    for (const msg of msgData.data.reverse()) {
+      if (msg.direction !== 'incoming') continue;
+      this.processMessage(msg, 'poll');
+    }
+  }
+
+  // ── Shared message processing ────────────────────────────────────
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private processMessage(msg: any, source: 'webhook' | 'poll'): void {
+    const msgId = msg.id;
+    if (!msgId) return;
+
+    // Dedup: skip messages we've already processed (from webhook or previous poll)
+    if (this.processedMessageIds.has(msgId)) return;
+    this.processedMessageIds.add(msgId);
+
+    // Cap dedup set size to prevent memory leak
+    if (this.processedMessageIds.size > 5000) {
+      const entries = [...this.processedMessageIds];
+      this.processedMessageIds = new Set(entries.slice(-2500));
+    }
 
     const customerNumber = msg.from;
-    // Quo API: 'to' can be a string or array
     const businessNumber = Array.isArray(msg.to) ? msg.to[0] : msg.to;
-    // Quo uses 'text' in API responses but may use 'body' in webhooks — accept both
     const text = msg.text || msg.body || '';
+
     if (!customerNumber || !businessNumber || !text) return;
 
     // Determine which business line received this
     const line = this.phoneLines.find((l) => l.phoneId === msg.phoneNumberId);
     const jid = line ? `quo:${line.number}` : `quo:${businessNumber}`;
+
+    logger.info({ source, from: customerNumber, jid, msgId }, 'Quo inbound SMS');
 
     // Track the customer number for reply routing
     this.lastSenderByJid.set(jid, customerNumber);
@@ -206,7 +312,7 @@ export class QuoChannel implements Channel {
     if (!groups[jid]) return;
 
     const newMsg: NewMessage = {
-      id: msg.id || `quo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: msgId,
       chat_jid: jid,
       sender: customerNumber,
       sender_name: customerNumber,
