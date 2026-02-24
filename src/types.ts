@@ -76,6 +76,39 @@ export interface TaskRunLog {
   error: string | null;
 }
 
+// --- Deal pipeline types ---
+
+export type DealStage = 'new' | 'qualified' | 'appointment_booked' | 'proposal' | 'closed_won' | 'closed_lost';
+
+export interface Deal {
+  id: string;
+  contact_id: string;
+  group_folder: string;
+  stage: DealStage;
+  value_cents: number | null;
+  source: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+}
+
+export interface DealStageLogEntry {
+  id?: number;
+  deal_id: string;
+  from_stage: string | null;
+  to_stage: string;
+  changed_at: string;
+  note: string | null;
+}
+
+export interface PipelineHealth {
+  group_folder: string;
+  stages: Record<string, number>;
+  total: number;
+  total_value_cents: number;
+}
+
 // --- CRM types ---
 
 export interface Contact {

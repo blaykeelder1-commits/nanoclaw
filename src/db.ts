@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
-import { Campaign, Contact, NewMessage, OutreachLog, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
+import { Campaign, Contact, Deal, DealStageLogEntry, NewMessage, OutreachLog, PipelineHealth, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
 
 let db: Database.Database;
 
@@ -121,6 +121,34 @@ function createSchema(database: Database.Database): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS deals (
+      id TEXT PRIMARY KEY,
+      contact_id TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      stage TEXT NOT NULL DEFAULT 'new',
+      value_cents INTEGER,
+      source TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      closed_at TEXT,
+      FOREIGN KEY (contact_id) REFERENCES contacts(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_deals_group ON deals(group_folder);
+    CREATE INDEX IF NOT EXISTS idx_deals_contact ON deals(contact_id);
+    CREATE INDEX IF NOT EXISTS idx_deals_stage ON deals(stage);
+
+    CREATE TABLE IF NOT EXISTS deal_stage_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      deal_id TEXT NOT NULL,
+      from_stage TEXT,
+      to_stage TEXT NOT NULL,
+      changed_at TEXT NOT NULL,
+      note TEXT,
+      FOREIGN KEY (deal_id) REFERENCES deals(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_deal_stage_log ON deal_stage_log(deal_id);
+
     CREATE TABLE IF NOT EXISTS usage_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       group_folder TEXT NOT NULL,
@@ -151,6 +179,15 @@ function createSchema(database: Database.Database): void {
     database.prepare(
       `UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`,
     ).run(`${ASSISTANT_NAME}:%`);
+  } catch {
+    /* column already exists */
+  }
+
+  // Add channel_source column to contacts (whatsapp/sms/email)
+  try {
+    database.exec(
+      `ALTER TABLE contacts ADD COLUMN channel_source TEXT`,
+    );
   } catch {
     /* column already exists */
   }
@@ -827,6 +864,85 @@ export function upsertContactFromPhone(
     now,
     now,
   );
+}
+
+// --- Deal pipeline accessors ---
+
+export function upsertDeal(deal: Deal): void {
+  db.prepare(
+    `INSERT INTO deals (id, contact_id, group_folder, stage, value_cents, source, notes, created_at, updated_at, closed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       stage = excluded.stage,
+       value_cents = COALESCE(excluded.value_cents, value_cents),
+       source = COALESCE(excluded.source, source),
+       notes = excluded.notes,
+       updated_at = excluded.updated_at,
+       closed_at = excluded.closed_at`,
+  ).run(
+    deal.id, deal.contact_id, deal.group_folder, deal.stage,
+    deal.value_cents, deal.source, deal.notes,
+    deal.created_at, deal.updated_at, deal.closed_at,
+  );
+}
+
+export function getDeal(id: string): Deal | undefined {
+  return db.prepare('SELECT * FROM deals WHERE id = ?').get(id) as Deal | undefined;
+}
+
+export function getDealByContact(contactId: string): Deal | undefined {
+  return db.prepare('SELECT * FROM deals WHERE contact_id = ? ORDER BY created_at DESC LIMIT 1').get(contactId) as Deal | undefined;
+}
+
+export function getDealsByGroup(groupFolder: string, stage?: string): Deal[] {
+  if (stage) {
+    return db.prepare('SELECT * FROM deals WHERE group_folder = ? AND stage = ? ORDER BY updated_at DESC').all(groupFolder, stage) as Deal[];
+  }
+  return db.prepare('SELECT * FROM deals WHERE group_folder = ? ORDER BY updated_at DESC').all(groupFolder) as Deal[];
+}
+
+export function moveDealStage(dealId: string, toStage: string, note?: string): void {
+  const deal = getDeal(dealId);
+  if (!deal) throw new Error(`Deal ${dealId} not found`);
+
+  const now = new Date().toISOString();
+  const closedAt = (toStage === 'closed_won' || toStage === 'closed_lost') ? now : deal.closed_at;
+
+  db.prepare(
+    `UPDATE deals SET stage = ?, updated_at = ?, closed_at = ? WHERE id = ?`,
+  ).run(toStage, now, closedAt, dealId);
+
+  db.prepare(
+    `INSERT INTO deal_stage_log (deal_id, from_stage, to_stage, changed_at, note)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(dealId, deal.stage, toStage, now, note || null);
+}
+
+export function getDealStageHistory(dealId: string): DealStageLogEntry[] {
+  return db.prepare(
+    'SELECT * FROM deal_stage_log WHERE deal_id = ? ORDER BY changed_at ASC',
+  ).all(dealId) as DealStageLogEntry[];
+}
+
+export function getPipelineHealth(groupFolder: string): PipelineHealth {
+  const stages = db.prepare(
+    `SELECT stage, COUNT(*) as count FROM deals WHERE group_folder = ? GROUP BY stage`,
+  ).all(groupFolder) as Array<{ stage: string; count: number }>;
+
+  const totals = db.prepare(
+    `SELECT COUNT(*) as total, COALESCE(SUM(value_cents), 0) as total_value
+     FROM deals WHERE group_folder = ?`,
+  ).get(groupFolder) as { total: number; total_value: number };
+
+  const stageMap: Record<string, number> = {};
+  for (const s of stages) stageMap[s.stage] = s.count;
+
+  return {
+    group_folder: groupFolder,
+    stages: stageMap,
+    total: totals.total,
+    total_value_cents: totals.total_value,
+  };
 }
 
 // --- Usage log accessors ---

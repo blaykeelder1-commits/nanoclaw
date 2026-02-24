@@ -1,7 +1,7 @@
 ---
 name: outreach-workflow
 description: End-to-end outreach workflow for lead generation and email campaigns. Use for morning outreach, follow-ups, weekly reports, and campaign management.
-allowed-tools: Bash(npx tsx /workspace/project/tools/crm/query-contacts.ts *), Bash(npx tsx /workspace/project/tools/email/send-email.ts *), Bash(npx tsx /workspace/project/tools/crm/import-apollo.ts *)
+allowed-tools: Bash(npx tsx /workspace/project/tools/crm/query-contacts.ts *), Bash(npx tsx /workspace/project/tools/email/send-email.ts *), Bash(npx tsx /workspace/project/tools/crm/import-apollo.ts *), Bash(npx tsx /workspace/project/tools/crm/unsubscribe.ts *), Bash(npx tsx /workspace/project/tools/crm/pipeline.ts *), Bash(npx tsx /workspace/project/tools/crm/unsubscribe.ts *), Bash(npx tsx /workspace/project/tools/crm/pipeline.ts *)
 ---
 
 # Outreach Workflow
@@ -120,6 +120,40 @@ If things change down the road, feel free to reach out.
 Best,
 [Your name]
 
+## Reputation Guards
+
+### Pre-Send Check
+
+Before each batch send, check outreach stats:
+```bash
+npx tsx /workspace/project/tools/crm/query-contacts.ts stats
+```
+
+If bounce rate exceeds 5% (total_bounced / total_sent > 0.05), **STOP all outreach** and alert the owner via email. Do not send more emails until the owner reviews.
+
+### Unsubscribe Detection
+
+When someone replies with "unsubscribe", "stop", "remove me", "opt out", or similar:
+
+```bash
+npx tsx /workspace/project/tools/crm/unsubscribe.ts --contact-id "id" --reason opted-out
+```
+
+When an email bounces:
+
+```bash
+npx tsx /workspace/project/tools/crm/unsubscribe.ts --contact-id "id" --reason bounced
+```
+
+Tagged contacts are automatically excluded from future `uncontacted` and `follow-up` queries.
+
+### Reply Tracking
+
+When someone replies to outreach (positive or negative):
+1. Update the pipeline stage: `pipeline.ts move --deal-id <id> --stage qualified --note "Replied to outreach"`
+2. Log the reply in outreach history
+3. Stop automated follow-ups — switch to conversational mode
+
 ## Warm-Up Schedule
 
 Week 1: 5 emails/day
@@ -128,3 +162,34 @@ Week 3: 15 emails/day
 Week 4+: 20 emails/day
 
 Never exceed 20 cold emails per day from a single domain.
+
+## Reputation Protection
+
+### Pre-Send Bounce Check
+Before any batch send, check outreach stats. If bounce rate exceeds 5%:
+1. STOP all outreach immediately
+2. Alert the owner: "Email bounce rate is above 5% — pausing outreach to protect sender reputation"
+3. Do NOT send any more emails until the owner responds
+
+### Unsubscribe Detection
+When someone replies with any of these phrases: "unsubscribe", "stop", "remove me", "opt out", "don't contact me", "take me off":
+1. Immediately mark them as opted-out:
+   ```bash
+   npx tsx /workspace/project/tools/crm/unsubscribe.ts --contact-id <id> --reason opted-out
+   ```
+2. Reply politely: "No problem, I've removed you from our list. Sorry for the bother!"
+
+### Bounce Handling
+When an email bounces (delivery failure notification):
+1. Mark the contact as bounced:
+   ```bash
+   npx tsx /workspace/project/tools/crm/unsubscribe.ts --contact-id <id> --reason bounced
+   ```
+
+### Reply Tracking
+When someone replies to outreach (positive or neutral):
+1. Update their deal pipeline stage:
+   ```bash
+   npx tsx /workspace/project/tools/crm/pipeline.ts move --deal-id <id> --stage qualified --note "Replied to outreach"
+   ```
+2. Log the reply in your conversation notes

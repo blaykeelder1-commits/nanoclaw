@@ -208,6 +208,10 @@ function readSecrets(): Record<string, string> {
     'GOOGLE_SERVICE_ACCOUNT_KEY', 'GOOGLE_SPREADSHEET_ID',
     // Google Calendar
     'GOOGLE_CALENDAR_ID',
+    // IDDI vending platform
+    'IDDI_BASE_URL', 'IDDI_EMAIL', 'IDDI_PASSWORD',
+    // IDDI vending platform
+    'IDDI_BASE_URL', 'IDDI_EMAIL', 'IDDI_PASSWORD',
     // Quo Phone (OpenPhone) — host-side only, not passed to container
     // 'QUO_API_KEY', 'QUO_SNAK_PHONE_ID', 'QUO_SHERIDAN_PHONE_ID',
     // Groq (voice transcription) — host-side only

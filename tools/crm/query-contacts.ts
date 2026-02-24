@@ -61,6 +61,7 @@ function main() {
          FROM contacts c
          LEFT JOIN outreach_log o ON c.id = o.contact_id
          WHERE o.id IS NULL
+           AND (c.tags IS NULL OR c.tags NOT LIKE '%do-not-contact%')
          ORDER BY c.created_at ASC LIMIT ?`,
       ).all(limit);
       console.log(JSON.stringify({ status: 'success', count: results.length, contacts: results }));
@@ -77,11 +78,13 @@ function main() {
          FROM contacts c
          INNER JOIN outreach_log o ON c.id = o.contact_id
          WHERE o.status = 'sent' AND o.sent_at < ?
+           AND (c.tags IS NULL OR c.tags NOT LIKE '%do-not-contact%')
            AND NOT EXISTS (
              SELECT 1 FROM outreach_log o2
              WHERE o2.contact_id = c.id AND o2.status IN ('replied', 'bounced')
            )
          GROUP BY c.id
+         HAVING COUNT(o.id) < 3
          ORDER BY MAX(o.sent_at) ASC LIMIT ?`,
       ).all(cutoff, limit);
       console.log(JSON.stringify({ status: 'success', count: results.length, contacts: results }));
