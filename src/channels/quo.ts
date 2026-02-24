@@ -201,7 +201,7 @@ export class QuoChannel implements Channel {
       try {
         await this.pollLine(line);
       } catch (err) {
-        logger.debug({ err, phone: line.number }, 'Quo poll error');
+        logger.warn({ err, phone: line.number }, 'Quo poll error');
       }
     }
   }
@@ -222,7 +222,12 @@ export class QuoChannel implements Channel {
     const convData = await convRes.json() as { data?: any[] };
     if (!convData.data) return;
 
-    for (const conv of convData.data) {
+    // Filter to conversations belonging to this phone line
+    const lineConvs = convData.data.filter(
+      (c: { phoneNumberId?: string }) => c.phoneNumberId === line.phoneId
+    );
+
+    for (const conv of lineConvs) {
       const lastActivityId = conv.lastActivityId;
       const prevActivityId = this.lastActivityByConversation.get(conv.id);
 
@@ -236,6 +241,7 @@ export class QuoChannel implements Channel {
       if (lastActivityId === prevActivityId) continue;
 
       // New activity detected — fetch recent messages
+      logger.info({ convId: conv.id, phone: line.number, participants: conv.participants }, 'Quo poll: new activity detected');
       this.lastActivityByConversation.set(conv.id, lastActivityId);
 
       const participants: string[] = conv.participants || [];
