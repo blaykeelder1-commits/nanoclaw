@@ -13,7 +13,6 @@ import qrcode from 'qrcode-terminal';
 import readline from 'readline';
 
 import makeWASocket, {
-  Browsers,
   DisconnectReason,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
@@ -60,7 +59,7 @@ async function connectSocket(phoneNumber?: string): Promise<void> {
     },
     printQRInTerminal: false,
     logger,
-    browser: Browsers.macOS('Chrome'),
+    browser: ['NanoClaw', 'Chrome', '22.04'],
   });
 
   if (usePairingCode && phoneNumber && !state.creds.me) {
