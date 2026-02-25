@@ -92,6 +92,8 @@ vi.mock('@whiskeysockets/baileys', () => {
       },
       saveCreds: vi.fn(),
     }),
+    fetchLatestBaileysVersion: vi.fn().mockResolvedValue({ version: [2, 3000, 1034003740] }),
+    downloadMediaMessage: vi.fn(),
   };
 });
 
