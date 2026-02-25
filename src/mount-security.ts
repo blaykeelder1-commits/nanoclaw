@@ -11,6 +11,7 @@ import path from 'path';
 import pino from 'pino';
 
 import { MOUNT_ALLOWLIST_PATH } from './config.js';
+import { audit } from './logger.js';
 import { AdditionalMount, AllowedRoot, MountAllowlist } from './types.js';
 
 const logger = pino({
@@ -375,6 +376,12 @@ export function validateAdditionalMounts(
         },
         'Additional mount REJECTED',
       );
+      audit('mount_rejected', {
+        group: groupName,
+        requestedPath: mount.hostPath,
+        containerPath: mount.containerPath,
+        reason: result.reason,
+      });
     }
   }
 

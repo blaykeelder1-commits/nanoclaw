@@ -5,6 +5,17 @@ export const logger = pino({
   transport: { target: 'pino-pretty', options: { colorize: true } },
 });
 
+/**
+ * Log a security-relevant event with a consistent `audit: true` tag.
+ * Filterable via: grep '"audit":true' or pino query.
+ */
+export function audit(
+  event: string,
+  data: Record<string, unknown> = {},
+): void {
+  logger.info({ audit: true, event, ...data }, `[AUDIT] ${event}`);
+}
+
 // Route uncaught errors through pino so they get timestamps in stderr
 process.on('uncaughtException', (err) => {
   logger.fatal({ err }, 'Uncaught exception');

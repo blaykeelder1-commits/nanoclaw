@@ -3,7 +3,10 @@
  * Receives inbound SMS via webhook + polling fallback, sends outbound via OpenPhone API.
  * JID format: quo:+1XXXXXXXXXX (the business phone number)
  */
+import crypto from 'crypto';
 import http from 'http';
+
+import { z } from 'zod/v4';
 
 import {
   ASSISTANT_NAME,
@@ -14,9 +17,90 @@ import {
   QUO_SHERIDAN_PHONE_ID,
   QUO_WEBHOOK_PORT,
 } from '../config.js';
+import { readEnvFile } from '../env.js';
 import { getLastSender, upsertContactFromPhone } from '../db.js';
-import { logger } from '../logger.js';
+import { audit, logger } from '../logger.js';
 import { Channel, NewMessage, OnChatMetadata, OnInboundMessage, RegisteredGroup } from '../types.js';
+
+// ── Rate Limiting ──────────────────────────────────────────────────
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = 30; // per IP per window
+
+interface RateLimitEntry {
+  count: number;
+  windowStart: number;
+}
+
+const rateLimitMap = new Map<string, RateLimitEntry>();
+
+// Clean up stale entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of rateLimitMap) {
+    if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
+      rateLimitMap.delete(ip);
+    }
+  }
+}, 300_000);
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+    rateLimitMap.set(ip, { count: 1, windowStart: now });
+    return false;
+  }
+
+  entry.count++;
+  return entry.count > RATE_LIMIT_MAX_REQUESTS;
+}
+
+// ── Webhook Signature Verification ─────────────────────────────────
+const QUO_WEBHOOK_SECRET = readEnvFile(['QUO_WEBHOOK_SECRET']).QUO_WEBHOOK_SECRET || '';
+
+function verifyWebhookSignature(signature: string | undefined, body: string): boolean {
+  if (!QUO_WEBHOOK_SECRET) {
+    // No secret configured — skip verification but warn
+    logger.warn('QUO_WEBHOOK_SECRET not configured, skipping signature verification');
+    return true;
+  }
+  if (!signature) return false;
+
+  // Format: hmac;1;timestamp;base64digest
+  const parts = signature.split(';');
+  if (parts.length !== 4 || parts[0] !== 'hmac') return false;
+
+  const [, , timestamp, digest] = parts;
+  const signedData = `${timestamp}.${body}`;
+  const key = Buffer.from(QUO_WEBHOOK_SECRET, 'base64');
+  const expected = crypto.createHmac('sha256', key).update(signedData).digest('base64');
+
+  try {
+    return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
+
+// ── Zod Webhook Payload Schema ─────────────────────────────────────
+const WebhookMessageSchema = z.object({
+  id: z.string(),
+  from: z.string(),
+  to: z.union([z.string(), z.array(z.string())]),
+  direction: z.string(),
+  text: z.string().optional(),
+  body: z.string().optional(),
+  phoneNumberId: z.string().optional(),
+  createdAt: z.string().optional(),
+});
+
+const WebhookPayloadSchema = z.object({
+  type: z.string(),
+  data: z.object({
+    object: WebhookMessageSchema,
+  }).optional(),
+});
 
 const QUO_API_BASE = 'https://api.openphone.com/v1';
 const POLL_INTERVAL_MS = 15_000; // Poll every 15 seconds
@@ -72,6 +156,17 @@ export class QuoChannel implements Channel {
     // Start webhook server
     await new Promise<void>((resolve) => {
       this.server = http.createServer((req, res) => {
+        // Rate limiting on all requests
+        const ip = req.headers['x-forwarded-for']?.toString().split(',')[0].trim()
+          || req.socket.remoteAddress || 'unknown';
+        if (isRateLimited(ip)) {
+          logger.warn({ ip }, 'Quo webhook rate limited');
+          audit('webhook_rate_limited', { ip });
+          res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+          res.end('{"error":"rate limited"}');
+          return;
+        }
+
         if (req.method === 'POST' && req.url === '/webhook/quo') {
           this.handleWebhook(req, res);
         } else {
@@ -167,22 +262,57 @@ export class QuoChannel implements Channel {
 
   private handleWebhook(req: http.IncomingMessage, res: http.ServerResponse): void {
     let body = '';
-    req.on('data', (chunk) => { body += chunk; });
+    let bodySize = 0;
+    const MAX_BODY_SIZE = 1_048_576; // 1MB
+
+    req.on('data', (chunk: Buffer) => {
+      bodySize += chunk.length;
+      if (bodySize > MAX_BODY_SIZE) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end('{"error":"payload too large"}');
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
     req.on('end', () => {
+      // Verify webhook signature
+      const signature = req.headers['openphone-signature'] as string | undefined;
+      if (!verifyWebhookSignature(signature, body)) {
+        logger.warn({ hasSignature: !!signature }, 'Quo webhook signature verification failed');
+        audit('webhook_signature_failed', { hasSignature: !!signature });
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end('{"error":"invalid signature"}');
+        return;
+      }
+
+      // Parse and validate JSON
+      let payload: unknown;
+      try {
+        payload = JSON.parse(body);
+      } catch (err) {
+        logger.warn({ err }, 'Quo webhook: invalid JSON');
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end('{"error":"invalid JSON"}');
+        return;
+      }
+
+      const result = WebhookPayloadSchema.safeParse(payload);
+      if (!result.success) {
+        logger.warn({ errors: result.error.issues }, 'Quo webhook: payload validation failed');
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end('{"error":"invalid payload"}');
+        return;
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end('{"ok":true}');
 
-      try {
-        const payload = JSON.parse(body);
-        this.processWebhookPayload(payload);
-      } catch (err) {
-        logger.error({ err }, 'Failed to parse Quo webhook payload');
-      }
+      this.processWebhookPayload(result.data);
     });
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private processWebhookPayload(payload: any): void {
+  private processWebhookPayload(payload: z.infer<typeof WebhookPayloadSchema>): void {
     if (payload.type !== 'message.received') return;
 
     const msg = payload.data?.object;

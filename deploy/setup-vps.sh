@@ -42,13 +42,21 @@ apt-get install -y -qq ufw fail2ban unattended-upgrades > /dev/null
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow 22/tcp    # SSH
-ufw allow 80/tcp    # HTTP (for future webhooks)
-ufw allow 443/tcp   # HTTPS
-ufw allow 3100/tcp  # Quo Phone webhook (OpenPhone SMS)
+ufw allow 80/tcp    # HTTP (certbot + redirect to HTTPS)
+ufw allow 443/tcp   # HTTPS (nginx reverse proxy for webhooks)
+# Port 3100 is NOT exposed externally — nginx proxies to 127.0.0.1:3100
 ufw --force enable
 
 echo "[2/8] Enabling fail2ban..."
 systemctl enable --now fail2ban
+
+# Install fail2ban filter for webhook abuse
+if [ -f "$NANOCLAW_DIR/deploy/fail2ban-nanoclaw.conf" ] 2>/dev/null; then
+  cp "$NANOCLAW_DIR/deploy/fail2ban-nanoclaw.conf" /etc/fail2ban/filter.d/nanoclaw.conf
+  cp "$NANOCLAW_DIR/deploy/fail2ban-nanoclaw-jail.conf" /etc/fail2ban/jail.d/nanoclaw.conf
+  systemctl restart fail2ban
+  echo "Fail2ban webhook filter installed"
+fi
 
 echo "[2/8] Enabling unattended upgrades..."
 dpkg-reconfigure -plow unattended-upgrades 2>/dev/null || true
@@ -159,8 +167,32 @@ fi
 echo "[7/8] Building agent container..."
 sudo -u nanoclaw bash -c "cd $NANOCLAW_DIR && bash container/build.sh" || echo "Container build will need to be run after Docker group takes effect (re-login)"
 
-# --- 8. Install systemd service ---
-echo "[8/8] Installing systemd service..."
+# --- 8. Install nginx reverse proxy + Let's Encrypt ---
+echo "[8/9] Setting up nginx reverse proxy..."
+apt-get install -y -qq nginx certbot python3-certbot-nginx > /dev/null
+
+# Install nginx config
+cp "$NANOCLAW_DIR/deploy/nginx.conf" /etc/nginx/sites-available/nanoclaw
+ln -sf /etc/nginx/sites-available/nanoclaw /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+
+# Create certbot webroot
+mkdir -p /var/www/certbot
+
+# Test nginx config (will fail on first run before certs exist — that's expected)
+if nginx -t 2>/dev/null; then
+  systemctl reload nginx
+  echo "nginx configured"
+else
+  echo "nginx config test failed (expected if TLS certs not yet created)"
+  echo "Run: sudo certbot --nginx -d yourdomain.com to generate certs"
+  echo "Or for IP-only (self-signed): sudo openssl req -x509 -nodes -days 365 \\"
+  echo "  -newkey rsa:2048 -keyout /etc/letsencrypt/live/nanoclaw/privkey.pem \\"
+  echo "  -out /etc/letsencrypt/live/nanoclaw/fullchain.pem -subj '/CN=nanoclaw'"
+fi
+
+# --- 9. Install systemd service ---
+echo "[9/9] Installing systemd service..."
 cp "$NANOCLAW_DIR/deploy/nanoclaw.service" /etc/systemd/system/nanoclaw.service
 systemctl daemon-reload
 systemctl enable nanoclaw

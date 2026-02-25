@@ -89,6 +89,54 @@ const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
 | Network access | Unrestricted | Unrestricted |
 | MCP tools | All | All |
 
+### 6. Webhook Security (Quo/OpenPhone SMS)
+
+The Quo channel receives inbound SMS via HTTP webhook on port 3100.
+
+**Defenses (application layer):**
+- **Rate limiting** — 30 requests/min per IP, in-memory counter with auto-cleanup
+- **Signature verification** — HMAC-SHA256 via `openphone-signature` header, timing-safe comparison
+- **Input validation** — Zod schema validation rejects malformed payloads with 400
+- **Body size limit** — 1MB max, prevents memory exhaustion
+- **Audit logging** — Rate limits, signature failures, and validation errors logged with `[AUDIT]` tag
+
+**Defenses (infrastructure layer):**
+- **nginx reverse proxy** — TLS termination, additional rate limiting (10 req/s burst 20)
+- **fail2ban** — Bans IPs with 10+ 4xx errors in 60s for 1 hour
+- **Firewall** — Port 3100 not exposed externally; nginx proxies from 443
+
+**Configuration required:**
+- `QUO_WEBHOOK_SECRET` in `.env` — Base64-encoded signing secret from OpenPhone webhook settings
+- TLS certificates via certbot or self-signed (see `deploy/nginx.conf`)
+
+### 7. Container Network Policy
+
+All containers currently have unrestricted outbound network access. This is required because every skill makes API calls (Google Sheets, SMTP, social media APIs, etc.).
+
+**Mitigations:**
+- Docker `--cap-drop=ALL` and `--security-opt=no-new-privileges` on Linux
+- Apple Container VM isolation on macOS
+- No inbound ports published from containers
+
+## Secret Rotation Procedure
+
+| Secret | Where | How to Rotate |
+|--------|-------|---------------|
+| `ANTHROPIC_API_KEY` | `.env` | Generate new key at console.anthropic.com, update `.env`, restart |
+| `CLAUDE_CODE_OAUTH_TOKEN` | `.env` | Re-authenticate via `claude auth`, update `.env`, restart |
+| `QUO_API_KEY` | `.env` | Generate new key in OpenPhone dashboard, update `.env`, restart |
+| `QUO_WEBHOOK_SECRET` | `.env` | Regenerate in OpenPhone webhook settings, update `.env`, restart |
+| `SMTP_PASS` | `.env` | Reset via email provider, update `.env`, restart |
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | `.env` | Rotate key in GCP IAM console, update `.env`, restart |
+| Social API tokens | `.env` | Regenerate via respective developer portals, update `.env`, restart |
+
+**General rotation steps:**
+1. Generate new credential in the provider's dashboard
+2. Update the value in `/home/nanoclaw/nanoclaw/.env`
+3. `sudo systemctl restart nanoclaw`
+4. Verify via `journalctl -u nanoclaw -f` — look for successful connection logs
+5. Revoke the old credential in the provider's dashboard
+
 ## Security Architecture Diagram
 
 ```

@@ -21,7 +21,7 @@ import {
 const CONTAINER_CMD = os.platform() === 'linux' ? 'docker' : 'container';
 import { logUsage } from './db.js';
 import { readEnvFile } from './env.js';
-import { logger } from './logger.js';
+import { audit, logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -289,6 +289,13 @@ export async function runContainerAgent(
     'Spawning container agent',
   );
 
+  audit('container_spawn', {
+    group: group.name,
+    containerName,
+    mountCount: mounts.length,
+    isMain: input.isMain,
+  });
+
   const logsDir = path.join(GROUPS_DIR, group.folder, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
@@ -407,6 +414,7 @@ export async function runContainerAgent(
     const killOnTimeout = () => {
       timedOut = true;
       logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
+      audit('container_timeout', { group: group.name, containerName });
       exec(`${CONTAINER_CMD} stop ${containerName}`, { timeout: 15000 }, (err) => {
         if (err) {
           logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');

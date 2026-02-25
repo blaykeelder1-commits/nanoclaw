@@ -24,6 +24,7 @@ vi.mock('./logger.js', () => ({
     warn: vi.fn(),
     error: vi.fn(),
   },
+  audit: vi.fn(),
 }));
 
 // Mock fs

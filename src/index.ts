@@ -154,12 +154,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const prompt = formatMessages(missedMessages);
 
-  // Advance cursor so the piping path in startMessageLoop won't re-fetch
-  // these messages. Save the old cursor so we can roll back on error.
-  const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] =
-    missedMessages[missedMessages.length - 1].timestamp;
-  saveState();
+  // Save the cursor we'll advance to on success.
+  // Cursor is NOT advanced until the agent succeeds — prevents message loss on timeout.
+  const nextCursor = missedMessages[missedMessages.length - 1].timestamp;
 
   logger.info(
     { group: group.name, messageCount: missedMessages.length },
@@ -206,19 +203,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
-    // If we already sent output to the user, don't roll back the cursor —
+    // If we already sent output to the user, advance cursor anyway —
     // the user got their response and re-processing would send duplicates.
     if (outputSentToUser) {
-      logger.warn({ group: group.name }, 'Agent error after output was sent, skipping cursor rollback to prevent duplicates');
+      logger.warn({ group: group.name }, 'Agent error after output was sent, advancing cursor to prevent duplicates');
+      lastAgentTimestamp[chatJid] = nextCursor;
+      saveState();
       return true;
     }
-    // Roll back cursor so retries can re-process these messages
-    lastAgentTimestamp[chatJid] = previousCursor;
-    saveState();
-    logger.warn({ group: group.name }, 'Agent error, rolled back message cursor for retry');
+    // Cursor was never advanced — messages will be re-processed on retry
+    logger.warn({ group: group.name }, 'Agent error, cursor not advanced — messages will retry');
     return false;
   }
 
+  // Success — advance the cursor now
+  lastAgentTimestamp[chatJid] = nextCursor;
+  saveState();
   return true;
 }
 
