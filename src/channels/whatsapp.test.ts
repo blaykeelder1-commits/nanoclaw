@@ -74,7 +74,6 @@ let fakeSocket: ReturnType<typeof createFakeSocket>;
 vi.mock('@whiskeysockets/baileys', () => {
   return {
     default: vi.fn(() => fakeSocket),
-    Browsers: { macOS: vi.fn(() => ['macOS', 'Chrome', '']) },
     DisconnectReason: {
       loggedOut: 401,
       badSession: 500,
@@ -92,7 +91,6 @@ vi.mock('@whiskeysockets/baileys', () => {
       },
       saveCreds: vi.fn(),
     }),
-    fetchLatestBaileysVersion: vi.fn().mockResolvedValue({ version: [2, 3000, 1034003740] }),
     downloadMediaMessage: vi.fn(),
   };
 });

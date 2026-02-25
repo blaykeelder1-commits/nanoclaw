@@ -3,10 +3,8 @@ import fs from 'fs';
 import path from 'path';
 
 import makeWASocket, {
-  Browsers,
   DisconnectReason,
   downloadMediaMessage,
-  fetchLatestBaileysVersion,
   WASocket,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
@@ -58,19 +56,14 @@ export class WhatsAppChannel implements Channel {
 
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
 
-    // Fetch latest WA Web version to avoid 405 errors from outdated defaults
-    const { version } = await fetchLatestBaileysVersion();
-    logger.info({ version }, 'Using WA Web version');
-
     this.sock = makeWASocket({
-      version,
       auth: {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, logger),
       },
       printQRInTerminal: false,
       logger,
-      browser: Browsers.macOS('Chrome'),
+      browser: ['NanoClaw', 'Chrome', '22.04'],
     });
 
     this.sock.ev.on('connection.update', (update) => {
@@ -350,7 +343,7 @@ export class WhatsAppChannel implements Channel {
 
     // Query Baileys' signal repository for the mapping
     try {
-      const pn = await this.sock.signalRepository?.lidMapping?.getPNForLID(jid);
+      const pn = await (this.sock.signalRepository as any)?.lidMapping?.getPNForLID(jid);
       if (pn) {
         const phoneJid = `${pn.split('@')[0].split(':')[0]}@s.whatsapp.net`;
         this.lidToPhoneMap[lidUser] = phoneJid;
