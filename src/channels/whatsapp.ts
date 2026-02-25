@@ -5,6 +5,7 @@ import path from 'path';
 import makeWASocket, {
   DisconnectReason,
   downloadMediaMessage,
+  fetchLatestWaWebVersion,
   WASocket,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
@@ -56,14 +57,20 @@ export class WhatsAppChannel implements Channel {
 
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
 
+    // Fetch latest WA Web version — required with Baileys from GitHub main
+    // to avoid 405 errors from outdated default version
+    const { version } = await fetchLatestWaWebVersion({});
+    logger.info({ version }, 'Using WA Web version');
+
     this.sock = makeWASocket({
+      version,
       auth: {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, logger),
       },
       printQRInTerminal: false,
       logger,
-      browser: ['NanoClaw', 'Chrome', '22.04'],
+      browser: ['Ubuntu', 'Chrome', '20.0.04'],
     });
 
     this.sock.ev.on('connection.update', (update) => {

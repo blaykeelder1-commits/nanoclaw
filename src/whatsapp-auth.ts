@@ -14,6 +14,7 @@ import readline from 'readline';
 
 import makeWASocket, {
   DisconnectReason,
+  fetchLatestWaWebVersion,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
@@ -52,14 +53,17 @@ async function connectSocket(phoneNumber?: string): Promise<void> {
     process.exit(0);
   }
 
+  const { version } = await fetchLatestWaWebVersion({});
+
   const sock = makeWASocket({
+    version,
     auth: {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
     printQRInTerminal: false,
     logger,
-    browser: ['NanoClaw', 'Chrome', '22.04'],
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
   });
 
   if (usePairingCode && phoneNumber && !state.creds.me) {
