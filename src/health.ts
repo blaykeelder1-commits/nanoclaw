@@ -1,9 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR, HEALTH_CHECK_INTERVAL, MAIN_GROUP_FOLDER, STORE_DIR } from './config.js';
+import { CronExpressionParser } from 'cron-parser';
+
+import { DATA_DIR, HEALTH_CHECK_INTERVAL, MAIN_GROUP_FOLDER, STORE_DIR, TIMEZONE } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
-import { getHealthState, getLastMessageTimestamp, setHealthState } from './db.js';
+import { getDueTasks, getHealthState, getLastMessageTimestamp, setHealthState, updateTask } from './db.js';
 import { logger } from './logger.js';
 import { Channel } from './types.js';
 
@@ -91,7 +93,28 @@ async function runHealthCheck(deps: HealthMonitorDeps): Promise<void> {
     }
   }
 
-  // Check 3: Auth state
+  // Check 3: Stale scheduled tasks (next_run stuck in the past)
+  try {
+    const dueTasks = getDueTasks();
+    const now = Date.now();
+    for (const task of dueTasks) {
+      if (task.schedule_type === 'cron' && task.next_run) {
+        const staleness = now - new Date(task.next_run).getTime();
+        if (staleness > 30 * 60 * 1000) { // 30+ min stale
+          try {
+            const nextRun = CronExpressionParser.parse(task.schedule_value, { tz: TIMEZONE }).next().toISOString();
+            updateTask(task.id, { next_run: nextRun });
+            logger.warn({ taskId: task.id, staleMinutes: Math.round(staleness / 60000), nextRun }, 'Health monitor auto-fixed stale cron task');
+            issues.push(`Auto-fixed stale task ${task.id} (was ${Math.round(staleness / 60000)} min overdue)`);
+          } catch { /* invalid cron */ }
+        }
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, 'Error checking stale tasks');
+  }
+
+  // Check 4: Auth state
   const authPresent = checkAuthState();
   if (!authPresent) {
     status = 'critical';

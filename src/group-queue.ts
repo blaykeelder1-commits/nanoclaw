@@ -16,6 +16,7 @@ const BASE_RETRY_MS = 5000;
 
 interface GroupState {
   active: boolean;
+  activeIsScheduledTask: boolean; // true if the active container is a scheduled task (not message processing)
   pendingMessages: boolean;
   pendingTasks: QueuedTask[];
   process: ChildProcess | null;
@@ -37,6 +38,7 @@ export class GroupQueue {
     if (!state) {
       state = {
         active: false,
+        activeIsScheduledTask: false,
         pendingMessages: false,
         pendingTasks: [],
         process: null,
@@ -58,7 +60,9 @@ export class GroupQueue {
 
     const state = this.getGroup(groupJid);
 
-    if (state.active) {
+    // If a message-processing container is active, queue the message for it.
+    // But if only a scheduled task is running, don't block — messages get their own container.
+    if (state.active && !state.activeIsScheduledTask) {
       state.pendingMessages = true;
       logger.debug({ groupJid }, 'Container active, message queued');
       return;
@@ -125,7 +129,8 @@ export class GroupQueue {
    */
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder) return false;
+    // Only pipe to message-processing containers, not scheduled tasks
+    if (!state.active || !state.groupFolder || state.activeIsScheduledTask) return false;
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
@@ -163,6 +168,7 @@ export class GroupQueue {
   ): Promise<void> {
     const state = this.getGroup(groupJid);
     state.active = true;
+    state.activeIsScheduledTask = false;
     state.pendingMessages = false;
     this.activeCount++;
 
@@ -185,6 +191,7 @@ export class GroupQueue {
       this.scheduleRetry(groupJid, state);
     } finally {
       state.active = false;
+      state.activeIsScheduledTask = false;
       state.process = null;
       state.containerName = null;
       state.groupFolder = null;
@@ -196,6 +203,7 @@ export class GroupQueue {
   private async runTask(groupJid: string, task: QueuedTask): Promise<void> {
     const state = this.getGroup(groupJid);
     state.active = true;
+    state.activeIsScheduledTask = true;
     this.activeCount++;
 
     logger.debug(
@@ -209,6 +217,7 @@ export class GroupQueue {
       logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
     } finally {
       state.active = false;
+      state.activeIsScheduledTask = false;
       state.process = null;
       state.containerName = null;
       state.groupFolder = null;

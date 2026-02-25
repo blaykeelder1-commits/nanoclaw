@@ -16,6 +16,7 @@ import {
   getDueTasks,
   getTaskById,
   logTaskRun,
+  updateTask,
   updateTaskAfterRun,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
@@ -199,6 +200,28 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
         const currentTask = getTaskById(task.id);
         if (!currentTask || currentTask.status !== 'active') {
           continue;
+        }
+
+        // If a cron task's next_run is >10 min in the past, skip to next future
+        // run instead of executing. Prevents stale tasks from endlessly re-queueing
+        // (e.g. after downtime or missed runs).
+        if (currentTask.schedule_type === 'cron' && currentTask.next_run) {
+          const staleness = Date.now() - new Date(currentTask.next_run).getTime();
+          if (staleness > 10 * 60 * 1000) {
+            try {
+              const nextRun = CronExpressionParser.parse(currentTask.schedule_value, {
+                tz: TIMEZONE,
+              }).next().toISOString();
+              logger.warn(
+                { taskId: currentTask.id, staleMinutes: Math.round(staleness / 60000), nextRun },
+                'Skipping stale cron task, advancing to next run',
+              );
+              updateTask(currentTask.id, { next_run: nextRun });
+              continue;
+            } catch {
+              logger.error({ taskId: currentTask.id }, 'Failed to parse cron for stale task');
+            }
+          }
         }
 
         deps.queue.enqueueTask(
