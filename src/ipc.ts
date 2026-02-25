@@ -1,3 +1,4 @@
+import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -344,6 +345,42 @@ export async function processTaskIpc(
           { sourceGroup },
           'Unauthorized refresh_groups attempt blocked',
         );
+      }
+      break;
+
+    case 'deploy_update':
+      // Only main group can trigger deploys
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Unauthorized deploy_update attempt blocked');
+        break;
+      }
+      logger.info('Deploy triggered via IPC');
+      try {
+        const deployScript = path.resolve(DATA_DIR, '..', 'deploy', 'deploy.sh');
+        const output = execSync(`bash "${deployScript}"`, {
+          encoding: 'utf-8',
+          timeout: 300000, // 5 minute timeout
+          cwd: path.resolve(DATA_DIR, '..'),
+        });
+        logger.info({ output: output.slice(-500) }, 'Deploy completed');
+        // Write result to IPC for the agent to read
+        const resultPath = path.join(DATA_DIR, 'ipc', sourceGroup, 'deploy_result.json');
+        fs.writeFileSync(resultPath, JSON.stringify({
+          status: 'success',
+          output: output.slice(-2000),
+          timestamp: new Date().toISOString(),
+        }));
+      } catch (err: any) {
+        const stderr = err.stderr?.toString().slice(-1000) || err.message;
+        const stdout = err.stdout?.toString().slice(-1000) || '';
+        logger.error({ stderr }, 'Deploy failed');
+        const resultPath = path.join(DATA_DIR, 'ipc', sourceGroup, 'deploy_result.json');
+        fs.writeFileSync(resultPath, JSON.stringify({
+          status: 'error',
+          output: stdout,
+          error: stderr,
+          timestamp: new Date().toISOString(),
+        }));
       }
       break;
 

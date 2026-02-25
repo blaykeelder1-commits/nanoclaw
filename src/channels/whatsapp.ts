@@ -19,7 +19,7 @@ import {
 } from '../db.js';
 import { logger } from '../logger.js';
 import { isVoiceMessage, transcribeAudio } from '../transcription.js';
-import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
+import { Channel, HealthInfo, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -34,6 +34,8 @@ export class WhatsAppChannel implements Channel {
 
   private sock!: WASocket;
   private connected = false;
+  private lastConnectedAt: string | null = null;
+  private disconnectLog: Array<{ reason: number; at: string }> = [];
   private lidToPhoneMap: Record<string, string> = {};
   private outgoingQueue: Array<{ jid: string; text: string }> = [];
   private flushing = false;
@@ -88,7 +90,9 @@ export class WhatsAppChannel implements Channel {
 
       if (connection === 'close') {
         this.connected = false;
-        const reason = (lastDisconnect?.error as any)?.output?.statusCode;
+        const reason = (lastDisconnect?.error as any)?.output?.statusCode ?? 0;
+        this.disconnectLog.push({ reason, at: new Date().toISOString() });
+        if (this.disconnectLog.length > 20) this.disconnectLog.shift();
         const shouldReconnect = reason !== DisconnectReason.loggedOut;
         logger.info({ reason, shouldReconnect, queuedMessages: this.outgoingQueue.length }, 'Connection closed');
 
@@ -108,6 +112,7 @@ export class WhatsAppChannel implements Channel {
         }
       } else if (connection === 'open') {
         this.connected = true;
+        this.lastConnectedAt = new Date().toISOString();
         logger.info('Connected to WhatsApp');
 
         // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)
@@ -299,6 +304,35 @@ export class WhatsAppChannel implements Channel {
     } catch (err) {
       logger.debug({ jid, err }, 'Failed to update typing status');
     }
+  }
+
+  /**
+   * Get health information for monitoring.
+   */
+  getHealthInfo(): HealthInfo {
+    const tenMinAgo = Date.now() - 10 * 60 * 1000;
+    const recentErrors = this.disconnectLog.filter(
+      (d) => new Date(d.at).getTime() > tenMinAgo &&
+        (d.reason === 405 || d.reason === 515),
+    );
+    return {
+      connected: this.connected,
+      lastConnectedAt: this.lastConnectedAt,
+      recentDisconnects: [...this.disconnectLog],
+      protocolErrorCount: recentErrors.length,
+    };
+  }
+
+  /**
+   * Force a full reconnect — re-fetches WA version to heal protocol mismatches.
+   */
+  async forceReconnect(): Promise<void> {
+    logger.info('Force reconnect requested by health monitor');
+    try {
+      this.sock?.end(undefined);
+    } catch { /* ignore */ }
+    this.connected = false;
+    await this.connectInternal();
   }
 
   /**

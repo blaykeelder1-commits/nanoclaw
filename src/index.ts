@@ -9,8 +9,10 @@ import {
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
+import { startHealthMonitor } from './health.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
 import {
   ContainerOutput,
@@ -19,6 +21,7 @@ import {
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
+  createTask,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -26,6 +29,7 @@ import {
   getMessagesSince,
   getNewMessages,
   getRouterState,
+  getTaskById,
   initDatabase,
   setRegisteredGroup,
   setRouterState,
@@ -34,6 +38,7 @@ import {
   storeMessage,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
+import { CronExpressionParser } from 'cron-parser';
 import { startIpcWatcher } from './ipc.js';
 import { formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
@@ -402,6 +407,73 @@ function recoverPendingMessages(): void {
   }
 }
 
+/**
+ * Seed Andy's scheduled health/dependency check tasks if they don't exist yet.
+ * Only creates tasks for the main group.
+ */
+function seedHealthTasks(): void {
+  // Find main group JID
+  let mainJid: string | null = null;
+  for (const [jid, group] of Object.entries(registeredGroups)) {
+    if (group.folder === MAIN_GROUP_FOLDER) {
+      mainJid = jid;
+      break;
+    }
+  }
+  if (!mainJid) {
+    logger.debug('No main group registered yet, skipping health task seeding');
+    return;
+  }
+
+  const HEALTH_TASK_ID = 'health-daily-check';
+  const DEP_TASK_ID = 'health-weekly-deps';
+
+  // Daily health check (9am)
+  if (!getTaskById(HEALTH_TASK_ID)) {
+    const dailyCron = '0 9 * * *';
+    const dailyNext = CronExpressionParser.parse(dailyCron, { tz: TIMEZONE }).next().toISOString();
+    createTask({
+      id: HEALTH_TASK_ID,
+      group_folder: MAIN_GROUP_FOLDER,
+      chat_jid: mainJid,
+      prompt: `Read the health snapshot at /workspace/ipc/health_snapshot.json and give a concise daily status report.
+Include: WhatsApp connection status, last message time, recent disconnects, uptime, and any current issues.
+If there are problems, suggest specific fixes. Keep it brief — this is a daily check-in, not a deep dive.
+If everything looks good, just say so in one line.`,
+      schedule_type: 'cron',
+      schedule_value: dailyCron,
+      context_mode: 'isolated',
+      next_run: dailyNext,
+      status: 'active',
+      created_at: new Date().toISOString(),
+    });
+    logger.info({ nextRun: dailyNext }, 'Seeded daily health check task');
+  }
+
+  // Weekly dependency check (Monday 10am)
+  if (!getTaskById(DEP_TASK_ID)) {
+    const weeklyCron = '0 10 * * 1';
+    const weeklyNext = CronExpressionParser.parse(weeklyCron, { tz: TIMEZONE }).next().toISOString();
+    createTask({
+      id: DEP_TASK_ID,
+      group_folder: MAIN_GROUP_FOLDER,
+      chat_jid: mainJid,
+      prompt: `Run a dependency health check:
+1. Run \`npm outdated --json\` and report any outdated packages, especially @whiskeysockets/baileys
+2. Run \`npm audit --json\` and report any critical or high severity vulnerabilities
+3. If Baileys has an update available, note whether it's a patch/minor/major bump
+Keep the report concise. Only flag things that need attention.`,
+      schedule_type: 'cron',
+      schedule_value: weeklyCron,
+      context_mode: 'isolated',
+      next_run: weeklyNext,
+      status: 'active',
+      created_at: new Date().toISOString(),
+    });
+    logger.info({ nextRun: weeklyNext }, 'Seeded weekly dependency check task');
+  }
+}
+
 function ensureContainerSystemRunning(): void {
   const isLinux = os.platform() === 'linux';
 
@@ -502,6 +574,7 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+  seedHealthTasks();
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
@@ -535,6 +608,18 @@ async function main(): Promise<void> {
 
   // Connect all channels
   await Promise.all(channels.map((ch) => ch.connect()));
+
+  // Start health monitor
+  startHealthMonitor({
+    channels,
+    sendAlert: (jid, text) => routeOutbound(jid, text),
+    getMainGroupJid: () => {
+      for (const [jid, group] of Object.entries(registeredGroups)) {
+        if (group.folder === MAIN_GROUP_FOLDER) return jid;
+      }
+      return null;
+    },
+  });
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({

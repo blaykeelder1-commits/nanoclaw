@@ -160,6 +160,15 @@ export interface Campaign {
   updated_at: string;
 }
 
+// --- Health monitoring ---
+
+export interface HealthInfo {
+  connected: boolean;
+  lastConnectedAt: string | null;
+  recentDisconnects: Array<{ reason: number; at: string }>;
+  protocolErrorCount: number;
+}
+
 // --- Channel abstraction ---
 
 export interface Channel {

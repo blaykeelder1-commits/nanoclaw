@@ -149,6 +149,12 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_deal_stage_log ON deal_stage_log(deal_id);
 
+    CREATE TABLE IF NOT EXISTS health_state (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS usage_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       group_folder TEXT NOT NULL,
@@ -956,6 +962,28 @@ export function getPipelineHealth(groupFolder: string): PipelineHealth {
     total: totals.total,
     total_value_cents: totals.total_value,
   };
+}
+
+// --- Health state accessors ---
+
+export function getHealthState(key: string): string | undefined {
+  const row = db
+    .prepare('SELECT value FROM health_state WHERE key = ?')
+    .get(key) as { value: string } | undefined;
+  return row?.value;
+}
+
+export function setHealthState(key: string, value: string): void {
+  db.prepare(
+    'INSERT OR REPLACE INTO health_state (key, value, updated_at) VALUES (?, ?, ?)',
+  ).run(key, value, new Date().toISOString());
+}
+
+export function getLastMessageTimestamp(): string | null {
+  const row = db
+    .prepare('SELECT MAX(timestamp) as ts FROM messages WHERE is_bot_message = 0')
+    .get() as { ts: string | null } | undefined;
+  return row?.ts || null;
 }
 
 // --- Usage log accessors ---

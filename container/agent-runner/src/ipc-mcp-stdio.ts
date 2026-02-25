@@ -276,6 +276,31 @@ Use available_groups.json to find the JID for a group. The folder name should be
   },
 );
 
+server.tool(
+  'deploy_update',
+  'Trigger a safe deploy from the latest code on GitHub main. Pulls code, builds, tests, rebuilds container, restarts service with automatic rollback on failure. Main group only.',
+  {},
+  async () => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can trigger deploys.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'deploy_update',
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: 'Deploy triggered. Check deploy_result.json for the outcome (may take a few minutes).' }],
+    };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);
