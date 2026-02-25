@@ -1,3 +1,4 @@
+import os from 'os';
 import path from 'path';
 
 import { readEnvFile } from './env.js';
@@ -6,23 +7,29 @@ import { readEnvFile } from './env.js';
 // Secrets are NOT read here — they stay on disk and are loaded only
 // where needed (container-runner.ts) to avoid leaking to child processes.
 const envConfig = readEnvFile([
-  'ASSISTANT_NAME', 'ASSISTANT_HAS_OWN_NUMBER',
-  'QUO_API_KEY', 'QUO_SNAK_PHONE_ID', 'QUO_SNAK_NUMBER',
-  'QUO_SHERIDAN_PHONE_ID', 'QUO_SHERIDAN_NUMBER', 'QUO_WEBHOOK_PORT',
+  'ASSISTANT_NAME',
+  'ASSISTANT_HAS_OWN_NUMBER',
+  'QUO_API_KEY',
+  'QUO_SNAK_PHONE_ID',
+  'QUO_SNAK_NUMBER',
+  'QUO_SHERIDAN_PHONE_ID',
+  'QUO_SHERIDAN_NUMBER',
+  'QUO_WEBHOOK_PORT',
   'GROQ_API_KEY',
 ]);
 
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
 export const ASSISTANT_HAS_OWN_NUMBER =
-  (process.env.ASSISTANT_HAS_OWN_NUMBER || envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
+  (process.env.ASSISTANT_HAS_OWN_NUMBER ||
+    envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 export const HEALTH_CHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 // Absolute paths needed for container mounts
 const PROJECT_ROOT = process.cwd();
-const HOME_DIR = process.env.HOME || '/Users/user';
+const HOME_DIR = process.env.HOME || os.homedir();
 
 // Mount security: allowlist stored OUTSIDE project root, never mounted into containers
 export const MOUNT_ALLOWLIST_PATH = path.join(
@@ -47,10 +54,7 @@ export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
   10,
 ); // 10MB default
 export const IPC_POLL_INTERVAL = 1000;
-export const IDLE_TIMEOUT = parseInt(
-  process.env.IDLE_TIMEOUT || '300000',
-  10,
-); // 5min default — how long to keep container alive after last result
+export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '300000', 10); // 5min default — how long to keep container alive after last result
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
@@ -80,10 +84,27 @@ export const QUO_SNAK_NUMBER =
 export const QUO_SHERIDAN_PHONE_ID =
   process.env.QUO_SHERIDAN_PHONE_ID || envConfig.QUO_SHERIDAN_PHONE_ID || '';
 export const QUO_SHERIDAN_NUMBER =
-  process.env.QUO_SHERIDAN_NUMBER || envConfig.QUO_SHERIDAN_NUMBER || '+18175871460';
+  process.env.QUO_SHERIDAN_NUMBER ||
+  envConfig.QUO_SHERIDAN_NUMBER ||
+  '+18175871460';
 export const QUO_WEBHOOK_PORT = parseInt(
   process.env.QUO_WEBHOOK_PORT || envConfig.QUO_WEBHOOK_PORT || '3100',
   10,
+);
+
+// --- Model routing & budget ---
+// Scheduled/background tasks use Haiku for cost efficiency
+// Interactive messages use Sonnet for quality
+export const MODEL_SCHEDULED =
+  process.env.MODEL_SCHEDULED || 'claude-haiku-4-5';
+export const MODEL_INTERACTIVE =
+  process.env.MODEL_INTERACTIVE || 'claude-sonnet-4-6';
+// Per-query USD budget caps (0 = no cap)
+export const BUDGET_SCHEDULED = parseFloat(
+  process.env.BUDGET_SCHEDULED || '0.05',
+);
+export const BUDGET_INTERACTIVE = parseFloat(
+  process.env.BUDGET_INTERACTIVE || '0.50',
 );
 
 // --- Groq (voice transcription) ---

@@ -24,10 +24,12 @@ export function readEnvFile(keys: string[]): Record<string, string> {
       if (stat.mode & 0o044) {
         console.warn(
           `WARNING: .env file is readable by group/others (mode ${(stat.mode & 0o777).toString(8)}). ` +
-          `Run "chmod 600 .env" to restrict access.`,
+            `Run "chmod 600 .env" to restrict access.`,
         );
       }
-    } catch { /* stat failed, skip check */ }
+    } catch {
+      /* stat failed, skip check */
+    }
   }
 
   const result: Record<string, string> = {};

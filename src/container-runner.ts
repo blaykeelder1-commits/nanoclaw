@@ -53,6 +53,8 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
   outputNonce?: string;
+  model?: string;          // e.g. 'claude-haiku-4-5' for scheduled tasks
+  maxBudgetUsd?: number;   // per-query spend cap
 }
 
 export interface ContainerOutput {
@@ -126,19 +128,26 @@ function buildVolumeMounts(
   fs.mkdirSync(groupSessionsDir, { recursive: true });
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {
-    fs.writeFileSync(settingsFile, JSON.stringify({
-      env: {
-        // Enable agent swarms (subagent orchestration)
-        // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
-        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-        // Load CLAUDE.md from additional mounted directories
-        // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
-        CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-        // Enable Claude's memory feature (persists user preferences between sessions)
-        // https://code.claude.com/docs/en/memory#manage-auto-memory
-        CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-      },
-    }, null, 2) + '\n');
+    fs.writeFileSync(
+      settingsFile,
+      JSON.stringify(
+        {
+          env: {
+            // Enable agent swarms (subagent orchestration)
+            // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
+            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+            // Load CLAUDE.md from additional mounted directories
+            // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
+            CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+            // Enable Claude's memory feature (persists user preferences between sessions)
+            // https://code.claude.com/docs/en/memory#manage-auto-memory
+            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+          },
+        },
+        null,
+        2,
+      ) + '\n',
+    );
   }
 
   // Sync skills from container/skills/ into each group's .claude/skills/
@@ -197,21 +206,33 @@ function readSecrets(): Record<string, string> {
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_API_KEY',
     // Email outreach
-    'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM',
+    'SMTP_HOST',
+    'SMTP_PORT',
+    'SMTP_USER',
+    'SMTP_PASS',
+    'SMTP_FROM',
     // X/Twitter
-    'X_API_KEY', 'X_API_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_SECRET',
+    'X_API_KEY',
+    'X_API_SECRET',
+    'X_ACCESS_TOKEN',
+    'X_ACCESS_SECRET',
     // Facebook
-    'FB_PAGE_ID', 'FB_PAGE_ACCESS_TOKEN',
+    'FB_PAGE_ID',
+    'FB_PAGE_ACCESS_TOKEN',
     // LinkedIn
-    'LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_PERSON_URN',
+    'LINKEDIN_ACCESS_TOKEN',
+    'LINKEDIN_PERSON_URN',
     // Google Sheets
-    'GOOGLE_SERVICE_ACCOUNT_KEY', 'GOOGLE_SPREADSHEET_ID',
+    'GOOGLE_SERVICE_ACCOUNT_KEY',
+    'GOOGLE_SPREADSHEET_ID',
     // Google Calendar
     'GOOGLE_CALENDAR_ID',
     // Google Maps (Places API for lead generation)
     'GOOGLE_MAPS_API_KEY',
     // IDDI vending platform
-    'IDDI_BASE_URL', 'IDDI_EMAIL', 'IDDI_PASSWORD',
+    'IDDI_BASE_URL',
+    'IDDI_EMAIL',
+    'IDDI_PASSWORD',
     // Quo Phone (OpenPhone) — host-side only, not passed to container
     // 'QUO_API_KEY', 'QUO_SNAK_PHONE_ID', 'QUO_SHERIDAN_PHONE_ID',
     // Groq (voice transcription) — host-side only
@@ -219,13 +240,22 @@ function readSecrets(): Record<string, string> {
   ]);
 }
 
-function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
+function buildContainerArgs(
+  mounts: VolumeMount[],
+  containerName: string,
+): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
-  // Docker: drop all capabilities and prevent privilege escalation.
+  // Docker: drop all capabilities, prevent privilege escalation, and set resource limits.
   // Apple Container is VM-based (inherently isolated), so these flags are not needed.
   if (CONTAINER_CMD === 'docker') {
-    args.push('--cap-drop=ALL', '--security-opt=no-new-privileges');
+    args.push(
+      '--cap-drop=ALL',
+      '--security-opt=no-new-privileges',
+      '--memory=512m',
+      '--cpus=1',
+      '--pids-limit=256',
+    );
   }
 
   // Apple Container: --mount for readonly, -v for read-write
@@ -245,6 +275,19 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string): strin
   return args;
 }
 
+/** Validate that a group folder name is safe (no path traversal). */
+function validateGroupFolder(folder: string): void {
+  if (
+    folder.includes('..') ||
+    folder.includes('/') ||
+    folder.includes('\\') ||
+    path.isAbsolute(folder) ||
+    folder !== path.basename(folder)
+  ) {
+    throw new Error(`Invalid group folder name: ${folder}`);
+  }
+}
+
 export async function runContainerAgent(
   group: RegisteredGroup,
   input: ContainerInput,
@@ -253,9 +296,13 @@ export async function runContainerAgent(
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
+  // Validate group folder to prevent path traversal in mount paths
+  validateGroupFolder(group.folder);
+
   // Generate per-run nonce for output markers to prevent injection
   const outputNonce = crypto.randomBytes(16).toString('hex');
-  const { start: OUTPUT_START_MARKER, end: OUTPUT_END_MARKER } = makeMarkers(outputNonce);
+  const { start: OUTPUT_START_MARKER, end: OUTPUT_END_MARKER } =
+    makeMarkers(outputNonce);
   input.outputNonce = outputNonce;
 
   const groupDir = path.join(GROUPS_DIR, group.folder);
@@ -322,8 +369,13 @@ export async function runContainerAgent(
     let parseBuffer = '';
     let newSessionId: string | undefined;
     let outputChain = Promise.resolve();
+    let hadStreamingOutput = false;
     // Accumulate usage across all streamed outputs
-    const accumulatedUsage = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 };
+    const accumulatedUsage = {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+    };
 
     container.stdout.on('data', (data) => {
       const chunk = data.toString();
@@ -364,7 +416,8 @@ export async function runContainerAgent(
             if (parsed.usage) {
               accumulatedUsage.input_tokens += parsed.usage.input_tokens;
               accumulatedUsage.output_tokens += parsed.usage.output_tokens;
-              accumulatedUsage.cache_read_tokens += parsed.usage.cache_read_tokens;
+              accumulatedUsage.cache_read_tokens +=
+                parsed.usage.cache_read_tokens;
             }
             hadStreamingOutput = true;
             // Activity detected — reset the hard timeout
@@ -405,7 +458,6 @@ export async function runContainerAgent(
     });
 
     let timedOut = false;
-    let hadStreamingOutput = false;
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
     // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
     // graceful _close sentinel has time to trigger before the hard kill fires.
@@ -413,14 +465,24 @@ export async function runContainerAgent(
 
     const killOnTimeout = () => {
       timedOut = true;
-      logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
+      logger.error(
+        { group: group.name, containerName },
+        'Container timeout, stopping gracefully',
+      );
       audit('container_timeout', { group: group.name, containerName });
-      exec(`${CONTAINER_CMD} stop ${containerName}`, { timeout: 15000 }, (err) => {
-        if (err) {
-          logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
-          container.kill('SIGKILL');
-        }
-      });
+      exec(
+        `${CONTAINER_CMD} stop ${containerName}`,
+        { timeout: 15000 },
+        (err) => {
+          if (err) {
+            logger.warn(
+              { group: group.name, containerName, err },
+              'Graceful stop failed, force killing',
+            );
+            container.kill('SIGKILL');
+          }
+        },
+      );
     };
 
     let timeout = setTimeout(killOnTimeout, timeoutMs);
@@ -438,15 +500,18 @@ export async function runContainerAgent(
       if (timedOut) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
         const timeoutLog = path.join(logsDir, `container-${ts}.log`);
-        fs.writeFileSync(timeoutLog, [
-          `=== Container Run Log (TIMEOUT) ===`,
-          `Timestamp: ${new Date().toISOString()}`,
-          `Group: ${group.name}`,
-          `Container: ${containerName}`,
-          `Duration: ${duration}ms`,
-          `Exit Code: ${code}`,
-          `Had Streaming Output: ${hadStreamingOutput}`,
-        ].join('\n'));
+        fs.writeFileSync(
+          timeoutLog,
+          [
+            `=== Container Run Log (TIMEOUT) ===`,
+            `Timestamp: ${new Date().toISOString()}`,
+            `Group: ${group.name}`,
+            `Container: ${containerName}`,
+            `Duration: ${duration}ms`,
+            `Exit Code: ${code}`,
+            `Had Streaming Output: ${hadStreamingOutput}`,
+          ].join('\n'),
+        );
 
         // Timeout after output = idle cleanup, not failure.
         // The agent already sent its response; this is just the
@@ -481,7 +546,8 @@ export async function runContainerAgent(
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const logFile = path.join(logsDir, `container-${timestamp}.log`);
-      const isVerbose = process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
+      const isVerbose =
+        process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
 
       const logLines = [
         `=== Container Run Log ===`,
@@ -561,7 +627,10 @@ export async function runContainerAgent(
       if (onOutput) {
         outputChain.then(() => {
           // Log accumulated token usage
-          if (accumulatedUsage.input_tokens > 0 || accumulatedUsage.output_tokens > 0) {
+          if (
+            accumulatedUsage.input_tokens > 0 ||
+            accumulatedUsage.output_tokens > 0
+          ) {
             try {
               logUsage({
                 group_folder: input.groupFolder,
@@ -573,7 +642,12 @@ export async function runContainerAgent(
             }
           }
           logger.info(
-            { group: group.name, duration, newSessionId, usage: accumulatedUsage },
+            {
+              group: group.name,
+              duration,
+              newSessionId,
+              usage: accumulatedUsage,
+            },
             'Container completed (streaming mode)',
           );
           resolve({
@@ -636,7 +710,10 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
-      logger.error({ group: group.name, containerName, error: err }, 'Container spawn error');
+      logger.error(
+        { group: group.name, containerName, error: err },
+        'Container spawn error',
+      );
       resolve({
         status: 'error',
         result: null,

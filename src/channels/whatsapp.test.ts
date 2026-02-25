@@ -91,7 +91,9 @@ vi.mock('@whiskeysockets/baileys', () => {
       },
       saveCreds: vi.fn(),
     }),
-    fetchLatestWaWebVersion: vi.fn().mockResolvedValue({ version: [2, 3000, 1034003740] }),
+    fetchLatestWaWebVersion: vi
+      .fn()
+      .mockResolvedValue({ version: [2, 3000, 1034003740] }),
     downloadMediaMessage: vi.fn(),
   };
 });
@@ -101,7 +103,9 @@ import { getLastGroupSync, updateChatName, setLastGroupSync } from '../db.js';
 
 // --- Test helpers ---
 
-function createTestOpts(overrides?: Partial<WhatsAppChannelOpts>): WhatsAppChannelOpts {
+function createTestOpts(
+  overrides?: Partial<WhatsAppChannelOpts>,
+): WhatsAppChannelOpts {
   return {
     onMessage: vi.fn(),
     onChatMetadata: vi.fn(),
@@ -201,10 +205,9 @@ describe('WhatsAppChannel', () => {
       await (channel as any).flushOutgoingQueue();
 
       // Group messages get prefixed when flushed
-      expect(fakeSocket.sendMessage).toHaveBeenCalledWith(
-        'test@g.us',
-        { text: 'Andy: Queued message' },
-      );
+      expect(fakeSocket.sendMessage).toHaveBeenCalledWith('test@g.us', {
+        text: 'Andy: Queued message',
+      });
     });
 
     it('disconnects cleanly', async () => {
@@ -224,7 +227,9 @@ describe('WhatsAppChannel', () => {
   describe('authentication', () => {
     it('exits process when QR code is emitted (no auth state)', async () => {
       vi.useFakeTimers();
-      const mockExit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      const mockExit = vi
+        .spyOn(process, 'exit')
+        .mockImplementation(() => undefined as never);
 
       const opts = createTestOpts();
       const channel = new WhatsAppChannel(opts);
@@ -266,7 +271,9 @@ describe('WhatsAppChannel', () => {
     });
 
     it('exits on loggedOut disconnect', async () => {
-      const mockExit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      const mockExit = vi
+        .spyOn(process, 'exit')
+        .mockImplementation(() => undefined as never);
 
       const opts = createTestOpts();
       const channel = new WhatsAppChannel(opts);
@@ -446,7 +453,10 @@ describe('WhatsAppChannel', () => {
             fromMe: false,
           },
           message: {
-            imageMessage: { caption: 'Check this photo', mimetype: 'image/jpeg' },
+            imageMessage: {
+              caption: 'Check this photo',
+              mimetype: 'image/jpeg',
+            },
           },
           pushName: 'Diana',
           messageTimestamp: Math.floor(Date.now() / 1000),
@@ -512,7 +522,9 @@ describe('WhatsAppChannel', () => {
       // Voice messages now attempt transcription; download fails in test = fallback message
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
-        expect.objectContaining({ content: '[Voice message — download failed]' }),
+        expect.objectContaining({
+          content: '[Voice message — download failed]',
+        }),
       );
     });
 
@@ -647,7 +659,9 @@ describe('WhatsAppChannel', () => {
 
       await channel.sendMessage('test@g.us', 'Hello');
       // Group messages get prefixed with assistant name
-      expect(fakeSocket.sendMessage).toHaveBeenCalledWith('test@g.us', { text: 'Andy: Hello' });
+      expect(fakeSocket.sendMessage).toHaveBeenCalledWith('test@g.us', {
+        text: 'Andy: Hello',
+      });
     });
 
     it('prefixes direct chat messages on shared number', async () => {
@@ -658,7 +672,10 @@ describe('WhatsAppChannel', () => {
 
       await channel.sendMessage('123@s.whatsapp.net', 'Hello');
       // Shared number: DMs also get prefixed (needed for self-chat distinction)
-      expect(fakeSocket.sendMessage).toHaveBeenCalledWith('123@s.whatsapp.net', { text: 'Andy: Hello' });
+      expect(fakeSocket.sendMessage).toHaveBeenCalledWith(
+        '123@s.whatsapp.net',
+        { text: 'Andy: Hello' },
+      );
     });
 
     it('queues message when disconnected', async () => {
@@ -702,9 +719,15 @@ describe('WhatsAppChannel', () => {
 
       expect(fakeSocket.sendMessage).toHaveBeenCalledTimes(3);
       // Group messages get prefixed
-      expect(fakeSocket.sendMessage).toHaveBeenNthCalledWith(1, 'test@g.us', { text: 'Andy: First' });
-      expect(fakeSocket.sendMessage).toHaveBeenNthCalledWith(2, 'test@g.us', { text: 'Andy: Second' });
-      expect(fakeSocket.sendMessage).toHaveBeenNthCalledWith(3, 'test@g.us', { text: 'Andy: Third' });
+      expect(fakeSocket.sendMessage).toHaveBeenNthCalledWith(1, 'test@g.us', {
+        text: 'Andy: First',
+      });
+      expect(fakeSocket.sendMessage).toHaveBeenNthCalledWith(2, 'test@g.us', {
+        text: 'Andy: Second',
+      });
+      expect(fakeSocket.sendMessage).toHaveBeenNthCalledWith(3, 'test@g.us', {
+        text: 'Andy: Third',
+      });
     });
   });
 
@@ -837,7 +860,10 @@ describe('WhatsAppChannel', () => {
       await connectChannel(channel);
 
       await channel.setTyping('test@g.us', true);
-      expect(fakeSocket.sendPresenceUpdate).toHaveBeenCalledWith('composing', 'test@g.us');
+      expect(fakeSocket.sendPresenceUpdate).toHaveBeenCalledWith(
+        'composing',
+        'test@g.us',
+      );
     });
 
     it('sends paused presence when stopping', async () => {
@@ -847,7 +873,10 @@ describe('WhatsAppChannel', () => {
       await connectChannel(channel);
 
       await channel.setTyping('test@g.us', false);
-      expect(fakeSocket.sendPresenceUpdate).toHaveBeenCalledWith('paused', 'test@g.us');
+      expect(fakeSocket.sendPresenceUpdate).toHaveBeenCalledWith(
+        'paused',
+        'test@g.us',
+      );
     });
 
     it('handles typing indicator failure gracefully', async () => {
@@ -859,7 +888,9 @@ describe('WhatsAppChannel', () => {
       fakeSocket.sendPresenceUpdate.mockRejectedValueOnce(new Error('Failed'));
 
       // Should not throw
-      await expect(channel.setTyping('test@g.us', true)).resolves.toBeUndefined();
+      await expect(
+        channel.setTyping('test@g.us', true),
+      ).resolves.toBeUndefined();
     });
   });
 

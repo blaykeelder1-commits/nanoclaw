@@ -71,14 +71,17 @@ let fakeProc: ReturnType<typeof createFakeProcess>;
 
 // Mock child_process.spawn
 vi.mock('child_process', async () => {
-  const actual = await vi.importActual<typeof import('child_process')>('child_process');
+  const actual =
+    await vi.importActual<typeof import('child_process')>('child_process');
   return {
     ...actual,
     spawn: vi.fn(() => fakeProc),
-    exec: vi.fn((_cmd: string, _opts: unknown, cb?: (err: Error | null) => void) => {
-      if (cb) cb(null);
-      return new EventEmitter();
-    }),
+    exec: vi.fn(
+      (_cmd: string, _opts: unknown, cb?: (err: Error | null) => void) => {
+        if (cb) cb(null);
+        return new EventEmitter();
+      },
+    ),
   };
 });
 
@@ -103,7 +106,9 @@ const testInput = {
  * Extract the outputNonce from stdin data written by runContainerAgent,
  * then set the dynamic markers accordingly.
  */
-function captureNonceFromStdin(proc: ReturnType<typeof createFakeProcess>): void {
+function captureNonceFromStdin(
+  proc: ReturnType<typeof createFakeProcess>,
+): void {
   const chunks: Buffer[] = [];
   proc.stdin.on('data', (chunk: Buffer) => chunks.push(chunk));
   proc.stdin.on('end', () => {
@@ -113,11 +118,16 @@ function captureNonceFromStdin(proc: ReturnType<typeof createFakeProcess>): void
       const nonce = parsed.outputNonce || 'DEFAULT';
       OUTPUT_START_MARKER = `---NANOCLAW_OUTPUT_${nonce}_START---`;
       OUTPUT_END_MARKER = `---NANOCLAW_OUTPUT_${nonce}_END---`;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   });
 }
 
-function emitOutputMarker(proc: ReturnType<typeof createFakeProcess>, output: ContainerOutput) {
+function emitOutputMarker(
+  proc: ReturnType<typeof createFakeProcess>,
+  output: ContainerOutput,
+) {
   const json = JSON.stringify(output);
   proc.stdout.push(`${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`);
 }

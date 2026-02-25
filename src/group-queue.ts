@@ -116,7 +116,12 @@ export class GroupQueue {
     this.runTask(groupJid, { id: taskId, groupJid, fn });
   }
 
-  registerProcess(groupJid: string, proc: ChildProcess, containerName: string, groupFolder?: string): void {
+  registerProcess(
+    groupJid: string,
+    proc: ChildProcess,
+    containerName: string,
+    groupFolder?: string,
+  ): void {
     const state = this.getGroup(groupJid);
     state.process = proc;
     state.containerName = containerName;
@@ -130,7 +135,8 @@ export class GroupQueue {
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
     // Only pipe to message-processing containers, not scheduled tasks
-    if (!state.active || !state.groupFolder || state.activeIsScheduledTask) return false;
+    if (!state.active || !state.groupFolder || state.activeIsScheduledTask)
+      return false;
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
@@ -141,7 +147,8 @@ export class GroupQueue {
       fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
       fs.renameSync(tempPath, filepath);
       return true;
-    } catch {
+    } catch (err) {
+      logger.debug({ groupJid, err }, 'Failed to write IPC message');
       return false;
     }
   }
@@ -157,8 +164,8 @@ export class GroupQueue {
     try {
       fs.mkdirSync(inputDir, { recursive: true });
       fs.writeFileSync(path.join(inputDir, '_close'), '');
-    } catch {
-      // ignore
+    } catch (err) {
+      logger.debug({ groupJid, err }, 'Failed to write close sentinel');
     }
   }
 

@@ -16,8 +16,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^7.0.0-rc.9",
-    "baileys": "github:WhiskeySockets/Baileys",
+    "@whiskeysockets/baileys": "github:WhiskeySockets/Baileys",
     "better-sqlite3": "^11.8.1",
     "cron-parser": "^5.5.0",
     "googleapis": "^171.4.0",

@@ -29,6 +29,25 @@ export interface IpcDeps {
   ) => void;
 }
 
+// Per-group rate limiting for IPC messages (counts actual files processed, not poll cycles)
+const IPC_RATE_LIMIT = 50; // max files per minute per group
+const IPC_RATE_WINDOW_MS = 60_000;
+const ipcRateMap = new Map<string, { count: number; windowStart: number }>();
+
+function recordIpcFile(group: string): boolean {
+  const now = Date.now();
+  const entry = ipcRateMap.get(group);
+  if (!entry || now - entry.windowStart > IPC_RATE_WINDOW_MS) {
+    ipcRateMap.set(group, { count: 1, windowStart: now });
+    return true; // under limit
+  }
+  entry.count++;
+  if (entry.count > IPC_RATE_LIMIT) {
+    return false; // over limit
+  }
+  return true; // under limit
+}
+
 let ipcWatcherRunning = false;
 
 export function startIpcWatcher(deps: IpcDeps): void {
@@ -57,7 +76,17 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
     const registeredGroups = deps.registeredGroups();
 
-    for (const sourceGroup of groupFolders) {
+    for (const rawGroup of groupFolders) {
+      // Normalize to prevent path traversal (e.g. "main/../main" bypassing auth)
+      const sourceGroup = path.basename(rawGroup);
+      if (
+        sourceGroup !== rawGroup ||
+        sourceGroup === '.' ||
+        sourceGroup === '..'
+      ) {
+        logger.warn({ rawGroup }, 'IPC: skipping invalid group folder name');
+        continue;
+      }
       const isMain = sourceGroup === MAIN_GROUP_FOLDER;
       const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
       const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
@@ -69,8 +98,21 @@ export function startIpcWatcher(deps: IpcDeps): void {
             .readdirSync(messagesDir)
             .filter((f) => f.endsWith('.json'));
           for (const file of messageFiles) {
+            if (!recordIpcFile(sourceGroup)) {
+              logger.warn({ sourceGroup }, 'IPC rate limit exceeded (50 files/min), deferring remaining');
+              break;
+            }
             const filePath = path.join(messagesDir, file);
             try {
+              const fileSize = fs.statSync(filePath).size;
+              if (fileSize > 1_048_576) {
+                logger.warn(
+                  { file, sourceGroup, fileSize },
+                  'IPC message file too large (>1MB), skipping',
+                );
+                fs.unlinkSync(filePath);
+                continue;
+              }
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
               if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
@@ -120,8 +162,21 @@ export function startIpcWatcher(deps: IpcDeps): void {
             .readdirSync(tasksDir)
             .filter((f) => f.endsWith('.json'));
           for (const file of taskFiles) {
+            if (!recordIpcFile(sourceGroup)) {
+              logger.warn({ sourceGroup }, 'IPC rate limit exceeded (50 files/min), deferring remaining tasks');
+              break;
+            }
             const filePath = path.join(tasksDir, file);
             try {
+              const fileSize = fs.statSync(filePath).size;
+              if (fileSize > 1_048_576) {
+                logger.warn(
+                  { file, sourceGroup, fileSize },
+                  'IPC task file too large (>1MB), skipping',
+                );
+                fs.unlinkSync(filePath);
+                continue;
+              }
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
               // Pass source group identity to processTaskIpc for authorization
               await processTaskIpc(data, sourceGroup, isMain, deps);
@@ -351,12 +406,20 @@ export async function processTaskIpc(
     case 'deploy_update':
       // Only main group can trigger deploys
       if (!isMain) {
-        logger.warn({ sourceGroup }, 'Unauthorized deploy_update attempt blocked');
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized deploy_update attempt blocked',
+        );
         break;
       }
       logger.info('Deploy triggered via IPC');
       try {
-        const deployScript = path.resolve(DATA_DIR, '..', 'deploy', 'deploy.sh');
+        const deployScript = path.resolve(
+          DATA_DIR,
+          '..',
+          'deploy',
+          'deploy.sh',
+        );
         const output = execSync(`bash "${deployScript}"`, {
           encoding: 'utf-8',
           timeout: 300000, // 5 minute timeout
@@ -364,23 +427,47 @@ export async function processTaskIpc(
         });
         logger.info({ output: output.slice(-500) }, 'Deploy completed');
         // Write result to IPC for the agent to read
-        const resultPath = path.join(DATA_DIR, 'ipc', sourceGroup, 'deploy_result.json');
-        fs.writeFileSync(resultPath, JSON.stringify({
-          status: 'success',
-          output: output.slice(-2000),
-          timestamp: new Date().toISOString(),
-        }));
-      } catch (err: any) {
-        const stderr = err.stderr?.toString().slice(-1000) || err.message;
-        const stdout = err.stdout?.toString().slice(-1000) || '';
+        const resultPath = path.join(
+          DATA_DIR,
+          'ipc',
+          sourceGroup,
+          'deploy_result.json',
+        );
+        fs.writeFileSync(
+          resultPath,
+          JSON.stringify({
+            status: 'success',
+            output: output.slice(-2000),
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      } catch (err: unknown) {
+        const execErr = err as {
+          stderr?: Buffer;
+          stdout?: Buffer;
+          message?: string;
+        };
+        const stderr =
+          execErr.stderr?.toString().slice(-1000) ||
+          execErr.message ||
+          String(err);
+        const stdout = execErr.stdout?.toString().slice(-1000) || '';
         logger.error({ stderr }, 'Deploy failed');
-        const resultPath = path.join(DATA_DIR, 'ipc', sourceGroup, 'deploy_result.json');
-        fs.writeFileSync(resultPath, JSON.stringify({
-          status: 'error',
-          output: stdout,
-          error: stderr,
-          timestamp: new Date().toISOString(),
-        }));
+        const resultPath = path.join(
+          DATA_DIR,
+          'ipc',
+          sourceGroup,
+          'deploy_result.json',
+        );
+        fs.writeFileSync(
+          resultPath,
+          JSON.stringify({
+            status: 'error',
+            output: stdout,
+            error: stderr,
+            timestamp: new Date().toISOString(),
+          }),
+        );
       }
       break;
 

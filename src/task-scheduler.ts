@@ -4,13 +4,19 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  BUDGET_SCHEDULED,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
+  MODEL_SCHEDULED,
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
-import { ContainerOutput, runContainerAgent, writeTasksSnapshot } from './container-runner.js';
+import {
+  ContainerOutput,
+  runContainerAgent,
+  writeTasksSnapshot,
+} from './container-runner.js';
 import {
   getAllTasks,
   getDueTasks,
@@ -27,7 +33,12 @@ export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
   queue: GroupQueue;
-  onProcess: (groupJid: string, proc: ChildProcess, containerName: string, groupFolder: string) => void;
+  onProcess: (
+    groupJid: string,
+    proc: ChildProcess,
+    containerName: string,
+    groupFolder: string,
+  ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
 }
 
@@ -97,7 +108,10 @@ async function runTask(
   const resetIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      logger.debug({ taskId: task.id }, 'Scheduled task idle timeout, closing container stdin');
+      logger.debug(
+        { taskId: task.id },
+        'Scheduled task idle timeout, closing container stdin',
+      );
       deps.queue.closeStdin(task.chat_jid);
     }, IDLE_TIMEOUT);
   };
@@ -112,8 +126,11 @@ async function runTask(
         chatJid: task.chat_jid,
         isMain,
         isScheduledTask: true,
+        model: MODEL_SCHEDULED,
+        maxBudgetUsd: BUDGET_SCHEDULED,
       },
-      (proc, containerName) => deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
+      (proc, containerName) =>
+        deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
@@ -206,28 +223,39 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
         // run instead of executing. Prevents stale tasks from endlessly re-queueing
         // (e.g. after downtime or missed runs).
         if (currentTask.schedule_type === 'cron' && currentTask.next_run) {
-          const staleness = Date.now() - new Date(currentTask.next_run).getTime();
+          const staleness =
+            Date.now() - new Date(currentTask.next_run).getTime();
           if (staleness > 10 * 60 * 1000) {
             try {
-              const nextRun = CronExpressionParser.parse(currentTask.schedule_value, {
-                tz: TIMEZONE,
-              }).next().toISOString();
+              const nextRun = CronExpressionParser.parse(
+                currentTask.schedule_value,
+                {
+                  tz: TIMEZONE,
+                },
+              )
+                .next()
+                .toISOString();
               logger.warn(
-                { taskId: currentTask.id, staleMinutes: Math.round(staleness / 60000), nextRun },
+                {
+                  taskId: currentTask.id,
+                  staleMinutes: Math.round(staleness / 60000),
+                  nextRun,
+                },
                 'Skipping stale cron task, advancing to next run',
               );
               updateTask(currentTask.id, { next_run: nextRun });
               continue;
             } catch {
-              logger.error({ taskId: currentTask.id }, 'Failed to parse cron for stale task');
+              logger.error(
+                { taskId: currentTask.id },
+                'Failed to parse cron for stale task',
+              );
             }
           }
         }
 
-        deps.queue.enqueueTask(
-          currentTask.chat_jid,
-          currentTask.id,
-          () => runTask(currentTask, deps),
+        deps.queue.enqueueTask(currentTask.chat_jid, currentTask.id, () =>
+          runTask(currentTask, deps),
         );
       }
     } catch (err) {

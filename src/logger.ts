@@ -9,10 +9,7 @@ export const logger = pino({
  * Log a security-relevant event with a consistent `audit: true` tag.
  * Filterable via: grep '"audit":true' or pino query.
  */
-export function audit(
-  event: string,
-  data: Record<string, unknown> = {},
-): void {
+export function audit(event: string, data: Record<string, unknown> = {}): void {
   logger.info({ audit: true, event, ...data }, `[AUDIT] ${event}`);
 }
 
@@ -23,5 +20,8 @@ process.on('uncaughtException', (err) => {
 });
 
 process.on('unhandledRejection', (reason) => {
-  logger.error({ err: reason }, 'Unhandled rejection');
+  logger.error(
+    { err: reason, stack: reason instanceof Error ? reason.stack : undefined },
+    'Unhandled rejection — this may indicate a missing await or uncaught promise error',
+  );
 });

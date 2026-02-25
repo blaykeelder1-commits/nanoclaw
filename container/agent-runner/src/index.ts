@@ -28,6 +28,8 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
   outputNonce?: string;
+  model?: string;          // e.g. 'claude-haiku-4-5' for scheduled tasks
+  maxBudgetUsd?: number;   // per-query spend cap
 }
 
 interface ContainerOutput {
@@ -330,6 +332,12 @@ function drainIpcInput(): string[] {
     for (const file of files) {
       const filePath = path.join(IPC_INPUT_DIR, file);
       try {
+        const fileSize = fs.statSync(filePath).size;
+        if (fileSize > 1_048_576) {
+          log(`IPC input file too large (${fileSize} bytes), skipping: ${file}`);
+          try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+          continue;
+        }
         const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         fs.unlinkSync(filePath);
         if (data.type === 'message' && data.text) {
@@ -437,6 +445,13 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  if (containerInput.model) {
+    log(`Using model: ${containerInput.model}`);
+  }
+  if (containerInput.maxBudgetUsd) {
+    log(`Budget cap: $${containerInput.maxBudgetUsd}`);
+  }
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -444,6 +459,8 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
+      model: containerInput.model || undefined,
+      maxBudgetUsd: containerInput.maxBudgetUsd || undefined,
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,

@@ -28,6 +28,8 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `container/skills/google-sheets/` | Google Sheets read/write/append |
 | `container/skills/google-calendar/` | Google Calendar events + availability |
 | `container/skills/vending-inventory/` | Vending machine sales + inventory automation |
+| `container/skills/inventory-reconcile/` | Cross-source inventory reconciliation + blacklist engine |
+| `tools/inventory/reconcile.ts` | Unified reconciliation CLI (IDDI + Sheets → reorder/blacklist decisions) |
 | `container/skills/google-drive/` | Google Drive file access |
 | `container/skills/lead-finder/` | Lead generation (Maps, scraping, scoring) |
 | `tools/email/send-email.ts` | SMTP email sender |

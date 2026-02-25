@@ -11,15 +11,22 @@ import makeWASocket, {
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
-import { ASSISTANT_HAS_OWN_NUMBER, ASSISTANT_NAME, GROUPS_DIR, STORE_DIR } from '../config.js';
 import {
-  getLastGroupSync,
-  setLastGroupSync,
-  updateChatName,
-} from '../db.js';
+  ASSISTANT_HAS_OWN_NUMBER,
+  ASSISTANT_NAME,
+  GROUPS_DIR,
+  STORE_DIR,
+} from '../config.js';
+import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
 import { logger } from '../logger.js';
 import { isVoiceMessage, transcribeAudio } from '../transcription.js';
-import { Channel, HealthInfo, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
+import {
+  Channel,
+  HealthInfo,
+  OnInboundMessage,
+  OnChatMetadata,
+  RegisteredGroup,
+} from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -90,11 +97,20 @@ export class WhatsAppChannel implements Channel {
 
       if (connection === 'close') {
         this.connected = false;
-        const reason = (lastDisconnect?.error as any)?.output?.statusCode ?? 0;
+        const reason =
+          (lastDisconnect?.error as { output?: { statusCode?: number } })
+            ?.output?.statusCode ?? 0;
         this.disconnectLog.push({ reason, at: new Date().toISOString() });
         if (this.disconnectLog.length > 20) this.disconnectLog.shift();
         const shouldReconnect = reason !== DisconnectReason.loggedOut;
-        logger.info({ reason, shouldReconnect, queuedMessages: this.outgoingQueue.length }, 'Connection closed');
+        logger.info(
+          {
+            reason,
+            shouldReconnect,
+            queuedMessages: this.outgoingQueue.length,
+          },
+          'Connection closed',
+        );
 
         if (shouldReconnect) {
           logger.info('Reconnecting...');
@@ -173,6 +189,16 @@ export class WhatsAppChannel implements Channel {
         // Always notify about chat metadata for group discovery
         this.opts.onChatMetadata(chatJid, timestamp);
 
+        // Validate JID format
+        if (
+          !chatJid.endsWith('@g.us') &&
+          !chatJid.endsWith('@s.whatsapp.net') &&
+          !chatJid.endsWith('@lid')
+        ) {
+          logger.debug({ chatJid }, 'Ignoring message with invalid JID format');
+          continue;
+        }
+
         // Only deliver full message for registered groups
         const groups = this.opts.registeredGroups();
         if (groups[chatJid]) {
@@ -191,12 +217,24 @@ export class WhatsAppChannel implements Channel {
           // Voice message transcription
           if (isVoiceMessage(msg)) {
             try {
-              const buffer = await downloadMediaMessage(msg, 'buffer', {}) as Buffer;
-              const transcript = await transcribeAudio(buffer, 'audio/ogg');
-              if (transcript) {
-                content = `[Voice: ${transcript}]`;
+              const buffer = (await downloadMediaMessage(
+                msg,
+                'buffer',
+                {},
+              )) as Buffer;
+              if (buffer.length > 25 * 1024 * 1024) {
+                logger.warn(
+                  { size: buffer.length },
+                  'Voice message too large (>25MB), skipping transcription',
+                );
+                content = '[Voice message — too large for transcription]';
               } else {
-                content = '[Voice message — transcription unavailable]';
+                const transcript = await transcribeAudio(buffer, 'audio/ogg');
+                if (transcript) {
+                  content = `[Voice: ${transcript}]`;
+                } else {
+                  content = '[Voice message — transcription unavailable]';
+                }
               }
             } catch (err) {
               logger.debug({ err }, 'Failed to download voice message');
@@ -207,12 +245,18 @@ export class WhatsAppChannel implements Channel {
           // Image message: download and save to group media folder
           if (msg.message?.imageMessage && !content) {
             try {
-              const buffer = await downloadMediaMessage(msg, 'buffer', {}) as Buffer;
+              const buffer = (await downloadMediaMessage(
+                msg,
+                'buffer',
+                {},
+              )) as Buffer;
               const mediaDir = path.join(GROUPS_DIR, group.folder, 'media');
               fs.mkdirSync(mediaDir, { recursive: true });
               const filename = `img-${Date.now()}.jpg`;
               fs.writeFileSync(path.join(mediaDir, filename), buffer);
-              const caption = (msg.message.imageMessage as { caption?: string }).caption || '';
+              const caption =
+                (msg.message.imageMessage as { caption?: string }).caption ||
+                '';
               content = `[Image: /workspace/group/media/${filename}]${caption ? ` ${caption}` : ''}`;
             } catch (err) {
               logger.debug({ err }, 'Failed to download image');
@@ -223,10 +267,17 @@ export class WhatsAppChannel implements Channel {
           // Document message: download and save to group media folder
           if (msg.message?.documentMessage) {
             try {
-              const buffer = await downloadMediaMessage(msg, 'buffer', {}) as Buffer;
+              const buffer = (await downloadMediaMessage(
+                msg,
+                'buffer',
+                {},
+              )) as Buffer;
               const mediaDir = path.join(GROUPS_DIR, group.folder, 'media');
               fs.mkdirSync(mediaDir, { recursive: true });
-              const origName = (msg.message.documentMessage as { fileName?: string }).fileName || 'document';
+              const rawName =
+                (msg.message.documentMessage as { fileName?: string })
+                  .fileName || 'document';
+              const origName = path.basename(rawName);
               const filename = `doc-${Date.now()}-${origName}`;
               fs.writeFileSync(path.join(mediaDir, filename), buffer);
               content = `[Document: /workspace/group/media/${filename}]`;
@@ -270,7 +321,10 @@ export class WhatsAppChannel implements Channel {
 
     if (!this.connected) {
       this.outgoingQueue.push({ jid, text: prefixed });
-      logger.info({ jid, length: prefixed.length, queueSize: this.outgoingQueue.length }, 'WA disconnected, message queued');
+      logger.info(
+        { jid, length: prefixed.length, queueSize: this.outgoingQueue.length },
+        'WA disconnected, message queued',
+      );
       return;
     }
     try {
@@ -279,7 +333,10 @@ export class WhatsAppChannel implements Channel {
     } catch (err) {
       // If send fails, queue it for retry on reconnect
       this.outgoingQueue.push({ jid, text: prefixed });
-      logger.warn({ jid, err, queueSize: this.outgoingQueue.length }, 'Failed to send, message queued');
+      logger.warn(
+        { jid, err, queueSize: this.outgoingQueue.length },
+        'Failed to send, message queued',
+      );
     }
   }
 
@@ -312,7 +369,8 @@ export class WhatsAppChannel implements Channel {
   getHealthInfo(): HealthInfo {
     const tenMinAgo = Date.now() - 10 * 60 * 1000;
     const recentErrors = this.disconnectLog.filter(
-      (d) => new Date(d.at).getTime() > tenMinAgo &&
+      (d) =>
+        new Date(d.at).getTime() > tenMinAgo &&
         (d.reason === 405 || d.reason === 515),
     );
     return {
@@ -330,7 +388,9 @@ export class WhatsAppChannel implements Channel {
     logger.info('Force reconnect requested by health monitor');
     try {
       this.sock?.end(undefined);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     this.connected = false;
     await this.connectInternal();
   }
@@ -378,17 +438,25 @@ export class WhatsAppChannel implements Channel {
     // Check local cache first
     const cached = this.lidToPhoneMap[lidUser];
     if (cached) {
-      logger.debug({ lidJid: jid, phoneJid: cached }, 'Translated LID to phone JID (cached)');
+      logger.debug(
+        { lidJid: jid, phoneJid: cached },
+        'Translated LID to phone JID (cached)',
+      );
       return cached;
     }
 
     // Query Baileys' signal repository for the mapping
     try {
-      const pn = await (this.sock.signalRepository as any)?.lidMapping?.getPNForLID(jid);
+      const pn = await (
+        this.sock.signalRepository as any
+      )?.lidMapping?.getPNForLID(jid);
       if (pn) {
         const phoneJid = `${pn.split('@')[0].split(':')[0]}@s.whatsapp.net`;
         this.lidToPhoneMap[lidUser] = phoneJid;
-        logger.info({ lidJid: jid, phoneJid }, 'Translated LID to phone JID (signalRepository)');
+        logger.info(
+          { lidJid: jid, phoneJid },
+          'Translated LID to phone JID (signalRepository)',
+        );
         return phoneJid;
       }
     } catch (err) {
@@ -402,12 +470,18 @@ export class WhatsAppChannel implements Channel {
     if (this.flushing || this.outgoingQueue.length === 0) return;
     this.flushing = true;
     try {
-      logger.info({ count: this.outgoingQueue.length }, 'Flushing outgoing message queue');
+      logger.info(
+        { count: this.outgoingQueue.length },
+        'Flushing outgoing message queue',
+      );
       while (this.outgoingQueue.length > 0) {
         const item = this.outgoingQueue.shift()!;
         // Send directly — queued items are already prefixed by sendMessage
         await this.sock.sendMessage(item.jid, { text: item.text });
-        logger.info({ jid: item.jid, length: item.text.length }, 'Queued message sent');
+        logger.info(
+          { jid: item.jid, length: item.text.length },
+          'Queued message sent',
+        );
       }
     } finally {
       this.flushing = false;

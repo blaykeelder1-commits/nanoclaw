@@ -3,7 +3,18 @@ import fs from 'fs';
 import path from 'path';
 
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
-import { Campaign, Contact, Deal, DealStageLogEntry, NewMessage, OutreachLog, PipelineHealth, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
+import {
+  Campaign,
+  Contact,
+  Deal,
+  DealStageLogEntry,
+  NewMessage,
+  OutreachLog,
+  PipelineHealth,
+  RegisteredGroup,
+  ScheduledTask,
+  TaskRunLog,
+} from './types.js';
 
 let db: Database.Database;
 
@@ -182,34 +193,68 @@ function createSchema(database: Database.Database): void {
       `ALTER TABLE messages ADD COLUMN is_bot_message INTEGER DEFAULT 0`,
     );
     // Backfill: mark existing bot messages that used the content prefix pattern
-    database.prepare(
-      `UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`,
-    ).run(`${ASSISTANT_NAME}:%`);
+    database
+      .prepare(`UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`)
+      .run(`${ASSISTANT_NAME}:%`);
   } catch {
     /* column already exists */
   }
 
   // Add channel_source column to contacts (whatsapp/sms/email)
   try {
-    database.exec(
-      `ALTER TABLE contacts ADD COLUMN channel_source TEXT`,
-    );
+    database.exec(`ALTER TABLE contacts ADD COLUMN channel_source TEXT`);
   } catch {
     /* column already exists */
   }
 
   // Lead generation columns
-  try { database.exec(`ALTER TABLE contacts ADD COLUMN lead_score INTEGER DEFAULT 0`); } catch { /* exists */ }
-  try { database.exec(`ALTER TABLE contacts ADD COLUMN lead_score_reasons TEXT`); } catch { /* exists */ }
-  try { database.exec(`ALTER TABLE contacts ADD COLUMN website TEXT`); } catch { /* exists */ }
-  try { database.exec(`ALTER TABLE contacts ADD COLUMN address TEXT`); } catch { /* exists */ }
-  try { database.exec(`ALTER TABLE contacts ADD COLUMN city TEXT`); } catch { /* exists */ }
-  try { database.exec(`ALTER TABLE contacts ADD COLUMN state TEXT`); } catch { /* exists */ }
-  try { database.exec(`ALTER TABLE contacts ADD COLUMN google_place_id TEXT`); } catch { /* exists */ }
-  try { database.exec(`ALTER TABLE contacts ADD COLUMN industry TEXT`); } catch { /* exists */ }
+  try {
+    database.exec(
+      `ALTER TABLE contacts ADD COLUMN lead_score INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* exists */
+  }
+  try {
+    database.exec(`ALTER TABLE contacts ADD COLUMN lead_score_reasons TEXT`);
+  } catch {
+    /* exists */
+  }
+  try {
+    database.exec(`ALTER TABLE contacts ADD COLUMN website TEXT`);
+  } catch {
+    /* exists */
+  }
+  try {
+    database.exec(`ALTER TABLE contacts ADD COLUMN address TEXT`);
+  } catch {
+    /* exists */
+  }
+  try {
+    database.exec(`ALTER TABLE contacts ADD COLUMN city TEXT`);
+  } catch {
+    /* exists */
+  }
+  try {
+    database.exec(`ALTER TABLE contacts ADD COLUMN state TEXT`);
+  } catch {
+    /* exists */
+  }
+  try {
+    database.exec(`ALTER TABLE contacts ADD COLUMN google_place_id TEXT`);
+  } catch {
+    /* exists */
+  }
+  try {
+    database.exec(`ALTER TABLE contacts ADD COLUMN industry TEXT`);
+  } catch {
+    /* exists */
+  }
 
   // Dedup index for Google Maps leads
-  database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_place_id ON contacts(google_place_id) WHERE google_place_id IS NOT NULL`);
+  database.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_place_id ON contacts(google_place_id) WHERE google_place_id IS NOT NULL`,
+  );
 }
 
 export function initDatabase(): void {
@@ -625,14 +670,12 @@ export function getRegisteredGroup(
     containerConfig: row.container_config
       ? JSON.parse(row.container_config)
       : undefined,
-    requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+    requiresTrigger:
+      row.requires_trigger === null ? undefined : row.requires_trigger === 1,
   };
 }
 
-export function setRegisteredGroup(
-  jid: string,
-  group: RegisteredGroup,
-): void {
+export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   db.prepare(
     `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -648,9 +691,7 @@ export function setRegisteredGroup(
 }
 
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
-  const rows = db
-    .prepare('SELECT * FROM registered_groups')
-    .all() as Array<{
+  const rows = db.prepare('SELECT * FROM registered_groups').all() as Array<{
     jid: string;
     name: string;
     folder: string;
@@ -669,7 +710,8 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       containerConfig: row.container_config
         ? JSON.parse(row.container_config)
         : undefined,
-      requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+      requiresTrigger:
+        row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     };
   }
   return result;
@@ -709,11 +751,15 @@ export function upsertContact(contact: Contact): void {
 }
 
 export function getContact(id: string): Contact | undefined {
-  return db.prepare('SELECT * FROM contacts WHERE id = ?').get(id) as Contact | undefined;
+  return db.prepare('SELECT * FROM contacts WHERE id = ?').get(id) as
+    | Contact
+    | undefined;
 }
 
 export function getContactByEmail(email: string): Contact | undefined {
-  return db.prepare('SELECT * FROM contacts WHERE email = ?').get(email) as Contact | undefined;
+  return db.prepare('SELECT * FROM contacts WHERE email = ?').get(email) as
+    | Contact
+    | undefined;
 }
 
 export function searchContacts(query: string, limit = 50): Contact[] {
@@ -723,7 +769,13 @@ export function searchContacts(query: string, limit = 50): Contact[] {
        WHERE first_name LIKE ? OR last_name LIKE ? OR company LIKE ? OR email LIKE ?
        ORDER BY updated_at DESC LIMIT ?`,
     )
-    .all(`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`, limit) as Contact[];
+    .all(
+      `%${query}%`,
+      `%${query}%`,
+      `%${query}%`,
+      `%${query}%`,
+      limit,
+    ) as Contact[];
 }
 
 export function getUncontactedLeads(limit = 10): Contact[] {
@@ -773,7 +825,9 @@ export function logOutreach(log: OutreachLog): void {
 
 export function getOutreachForContact(contactId: string): OutreachLog[] {
   return db
-    .prepare('SELECT * FROM outreach_log WHERE contact_id = ? ORDER BY sent_at DESC')
+    .prepare(
+      'SELECT * FROM outreach_log WHERE contact_id = ? ORDER BY sent_at DESC',
+    )
     .all(contactId) as OutreachLog[];
 }
 
@@ -796,7 +850,11 @@ export function getOutreachStats(): {
          SUM(CASE WHEN status = 'bounced' THEN 1 ELSE 0 END) as total_bounced
        FROM outreach_log`,
     )
-    .get() as { total_sent: number; total_replied: number; total_bounced: number };
+    .get() as {
+    total_sent: number;
+    total_replied: number;
+    total_bounced: number;
+  };
 
   const sentToday = db
     .prepare('SELECT COUNT(*) as count FROM outreach_log WHERE sent_at >= ?')
@@ -837,15 +895,23 @@ export function upsertCampaign(campaign: Campaign): void {
 }
 
 export function getCampaign(id: string): Campaign | undefined {
-  return db.prepare('SELECT * FROM campaigns WHERE id = ?').get(id) as Campaign | undefined;
+  return db.prepare('SELECT * FROM campaigns WHERE id = ?').get(id) as
+    | Campaign
+    | undefined;
 }
 
 export function getAllCampaigns(): Campaign[] {
-  return db.prepare('SELECT * FROM campaigns ORDER BY created_at DESC').all() as Campaign[];
+  return db
+    .prepare('SELECT * FROM campaigns ORDER BY created_at DESC')
+    .all() as Campaign[];
 }
 
 export function getContactCount(): number {
-  return (db.prepare('SELECT COUNT(*) as count FROM contacts').get() as { count: number }).count;
+  return (
+    db.prepare('SELECT COUNT(*) as count FROM contacts').get() as {
+      count: number;
+    }
+  ).count;
 }
 
 // --- CRM: auto-create contacts from phone numbers ---
@@ -899,33 +965,61 @@ export function upsertDeal(deal: Deal): void {
        updated_at = excluded.updated_at,
        closed_at = excluded.closed_at`,
   ).run(
-    deal.id, deal.contact_id, deal.group_folder, deal.stage,
-    deal.value_cents, deal.source, deal.notes,
-    deal.created_at, deal.updated_at, deal.closed_at,
+    deal.id,
+    deal.contact_id,
+    deal.group_folder,
+    deal.stage,
+    deal.value_cents,
+    deal.source,
+    deal.notes,
+    deal.created_at,
+    deal.updated_at,
+    deal.closed_at,
   );
 }
 
 export function getDeal(id: string): Deal | undefined {
-  return db.prepare('SELECT * FROM deals WHERE id = ?').get(id) as Deal | undefined;
+  return db.prepare('SELECT * FROM deals WHERE id = ?').get(id) as
+    | Deal
+    | undefined;
 }
 
 export function getDealByContact(contactId: string): Deal | undefined {
-  return db.prepare('SELECT * FROM deals WHERE contact_id = ? ORDER BY created_at DESC LIMIT 1').get(contactId) as Deal | undefined;
+  return db
+    .prepare(
+      'SELECT * FROM deals WHERE contact_id = ? ORDER BY created_at DESC LIMIT 1',
+    )
+    .get(contactId) as Deal | undefined;
 }
 
 export function getDealsByGroup(groupFolder: string, stage?: string): Deal[] {
   if (stage) {
-    return db.prepare('SELECT * FROM deals WHERE group_folder = ? AND stage = ? ORDER BY updated_at DESC').all(groupFolder, stage) as Deal[];
+    return db
+      .prepare(
+        'SELECT * FROM deals WHERE group_folder = ? AND stage = ? ORDER BY updated_at DESC',
+      )
+      .all(groupFolder, stage) as Deal[];
   }
-  return db.prepare('SELECT * FROM deals WHERE group_folder = ? ORDER BY updated_at DESC').all(groupFolder) as Deal[];
+  return db
+    .prepare(
+      'SELECT * FROM deals WHERE group_folder = ? ORDER BY updated_at DESC',
+    )
+    .all(groupFolder) as Deal[];
 }
 
-export function moveDealStage(dealId: string, toStage: string, note?: string): void {
+export function moveDealStage(
+  dealId: string,
+  toStage: string,
+  note?: string,
+): void {
   const deal = getDeal(dealId);
   if (!deal) throw new Error(`Deal ${dealId} not found`);
 
   const now = new Date().toISOString();
-  const closedAt = (toStage === 'closed_won' || toStage === 'closed_lost') ? now : deal.closed_at;
+  const closedAt =
+    toStage === 'closed_won' || toStage === 'closed_lost'
+      ? now
+      : deal.closed_at;
 
   db.prepare(
     `UPDATE deals SET stage = ?, updated_at = ?, closed_at = ? WHERE id = ?`,
@@ -938,20 +1032,26 @@ export function moveDealStage(dealId: string, toStage: string, note?: string): v
 }
 
 export function getDealStageHistory(dealId: string): DealStageLogEntry[] {
-  return db.prepare(
-    'SELECT * FROM deal_stage_log WHERE deal_id = ? ORDER BY changed_at ASC',
-  ).all(dealId) as DealStageLogEntry[];
+  return db
+    .prepare(
+      'SELECT * FROM deal_stage_log WHERE deal_id = ? ORDER BY changed_at ASC',
+    )
+    .all(dealId) as DealStageLogEntry[];
 }
 
 export function getPipelineHealth(groupFolder: string): PipelineHealth {
-  const stages = db.prepare(
-    `SELECT stage, COUNT(*) as count FROM deals WHERE group_folder = ? GROUP BY stage`,
-  ).all(groupFolder) as Array<{ stage: string; count: number }>;
+  const stages = db
+    .prepare(
+      `SELECT stage, COUNT(*) as count FROM deals WHERE group_folder = ? GROUP BY stage`,
+    )
+    .all(groupFolder) as Array<{ stage: string; count: number }>;
 
-  const totals = db.prepare(
-    `SELECT COUNT(*) as total, COALESCE(SUM(value_cents), 0) as total_value
+  const totals = db
+    .prepare(
+      `SELECT COUNT(*) as total, COALESCE(SUM(value_cents), 0) as total_value
      FROM deals WHERE group_folder = ?`,
-  ).get(groupFolder) as { total: number; total_value: number };
+    )
+    .get(groupFolder) as { total: number; total_value: number };
 
   const stageMap: Record<string, number> = {};
   for (const s of stages) stageMap[s.stage] = s.count;
@@ -981,7 +1081,9 @@ export function setHealthState(key: string, value: string): void {
 
 export function getLastMessageTimestamp(): string | null {
   const row = db
-    .prepare('SELECT MAX(timestamp) as ts FROM messages WHERE is_bot_message = 0')
+    .prepare(
+      'SELECT MAX(timestamp) as ts FROM messages WHERE is_bot_message = 0',
+    )
     .get() as { ts: string | null } | undefined;
   return row?.ts || null;
 }
@@ -1009,7 +1111,10 @@ export function logUsage(entry: UsageEntry): void {
   );
 }
 
-export function getUsageStats(groupFolder?: string, sinceDays = 30): {
+export function getUsageStats(
+  groupFolder?: string,
+  sinceDays = 30,
+): {
   total_input: number;
   total_output: number;
   total_cache_read: number;
@@ -1018,27 +1123,37 @@ export function getUsageStats(groupFolder?: string, sinceDays = 30): {
   const cutoff = new Date(Date.now() - sinceDays * 86400000).toISOString();
 
   if (groupFolder) {
-    return db.prepare(
-      `SELECT
+    return db
+      .prepare(
+        `SELECT
         COALESCE(SUM(input_tokens), 0) as total_input,
         COALESCE(SUM(output_tokens), 0) as total_output,
         COALESCE(SUM(cache_read_tokens), 0) as total_cache_read,
         COUNT(*) as count
        FROM usage_log WHERE group_folder = ? AND timestamp >= ?`,
-    ).get(groupFolder, cutoff) as {
-      total_input: number; total_output: number; total_cache_read: number; count: number;
+      )
+      .get(groupFolder, cutoff) as {
+      total_input: number;
+      total_output: number;
+      total_cache_read: number;
+      count: number;
     };
   }
 
-  return db.prepare(
-    `SELECT
+  return db
+    .prepare(
+      `SELECT
       COALESCE(SUM(input_tokens), 0) as total_input,
       COALESCE(SUM(output_tokens), 0) as total_output,
       COALESCE(SUM(cache_read_tokens), 0) as total_cache_read,
       COUNT(*) as count
      FROM usage_log WHERE timestamp >= ?`,
-  ).get(cutoff) as {
-    total_input: number; total_output: number; total_cache_read: number; count: number;
+    )
+    .get(cutoff) as {
+    total_input: number;
+    total_output: number;
+    total_cache_read: number;
+    count: number;
   };
 }
 

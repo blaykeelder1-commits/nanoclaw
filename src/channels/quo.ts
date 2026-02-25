@@ -20,7 +20,13 @@ import {
 import { readEnvFile } from '../env.js';
 import { getLastSender, upsertContactFromPhone } from '../db.js';
 import { audit, logger } from '../logger.js';
-import { Channel, NewMessage, OnChatMetadata, OnInboundMessage, RegisteredGroup } from '../types.js';
+import {
+  Channel,
+  NewMessage,
+  OnChatMetadata,
+  OnInboundMessage,
+  RegisteredGroup,
+} from '../types.js';
 
 // ── Rate Limiting ──────────────────────────────────────────────────
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
@@ -57,13 +63,19 @@ function isRateLimited(ip: string): boolean {
 }
 
 // ── Webhook Signature Verification ─────────────────────────────────
-const QUO_WEBHOOK_SECRET = readEnvFile(['QUO_WEBHOOK_SECRET']).QUO_WEBHOOK_SECRET || '';
+const QUO_WEBHOOK_SECRET =
+  readEnvFile(['QUO_WEBHOOK_SECRET']).QUO_WEBHOOK_SECRET || '';
 
-function verifyWebhookSignature(signature: string | undefined, body: string): boolean {
+function verifyWebhookSignature(
+  signature: string | undefined,
+  body: string,
+): boolean {
   if (!QUO_WEBHOOK_SECRET) {
-    // No secret configured — skip verification but warn
-    logger.warn('QUO_WEBHOOK_SECRET not configured, skipping signature verification');
-    return true;
+    // No secret configured — reject all webhook requests
+    logger.error(
+      'QUO_WEBHOOK_SECRET not configured, rejecting webhook request',
+    );
+    return false;
   }
   if (!signature) return false;
 
@@ -74,7 +86,10 @@ function verifyWebhookSignature(signature: string | undefined, body: string): bo
   const [, , timestamp, digest] = parts;
   const signedData = `${timestamp}.${body}`;
   const key = Buffer.from(QUO_WEBHOOK_SECRET, 'base64');
-  const expected = crypto.createHmac('sha256', key).update(signedData).digest('base64');
+  const expected = crypto
+    .createHmac('sha256', key)
+    .update(signedData)
+    .digest('base64');
 
   try {
     return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(expected));
@@ -97,9 +112,11 @@ const WebhookMessageSchema = z.object({
 
 const WebhookPayloadSchema = z.object({
   type: z.string(),
-  data: z.object({
-    object: WebhookMessageSchema,
-  }).optional(),
+  data: z
+    .object({
+      object: WebhookMessageSchema,
+    })
+    .optional(),
 });
 
 const QUO_API_BASE = 'https://api.openphone.com/v1';
@@ -145,10 +162,16 @@ export class QuoChannel implements Channel {
 
     // Register configured phone lines
     if (QUO_SNAK_PHONE_ID && QUO_SNAK_NUMBER) {
-      this.phoneLines.push({ phoneId: QUO_SNAK_PHONE_ID, number: QUO_SNAK_NUMBER });
+      this.phoneLines.push({
+        phoneId: QUO_SNAK_PHONE_ID,
+        number: QUO_SNAK_NUMBER,
+      });
     }
     if (QUO_SHERIDAN_PHONE_ID && QUO_SHERIDAN_NUMBER) {
-      this.phoneLines.push({ phoneId: QUO_SHERIDAN_PHONE_ID, number: QUO_SHERIDAN_NUMBER });
+      this.phoneLines.push({
+        phoneId: QUO_SHERIDAN_PHONE_ID,
+        number: QUO_SHERIDAN_NUMBER,
+      });
     }
   }
 
@@ -157,12 +180,17 @@ export class QuoChannel implements Channel {
     await new Promise<void>((resolve) => {
       this.server = http.createServer((req, res) => {
         // Rate limiting on all requests
-        const ip = req.headers['x-forwarded-for']?.toString().split(',')[0].trim()
-          || req.socket.remoteAddress || 'unknown';
+        const ip =
+          req.headers['x-forwarded-for']?.toString().split(',')[0].trim() ||
+          req.socket.remoteAddress ||
+          'unknown';
         if (isRateLimited(ip)) {
           logger.warn({ ip }, 'Quo webhook rate limited');
           audit('webhook_rate_limited', { ip });
-          res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+          res.writeHead(429, {
+            'Content-Type': 'application/json',
+            'Retry-After': '60',
+          });
           res.end('{"error":"rate limited"}');
           return;
         }
@@ -216,7 +244,7 @@ export class QuoChannel implements Channel {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': QUO_API_KEY,
+          Authorization: QUO_API_KEY,
         },
         body: JSON.stringify({
           content: prefixed,
@@ -229,7 +257,10 @@ export class QuoChannel implements Channel {
         const body = await response.text();
         logger.error({ jid, status: response.status, body }, 'Quo send failed');
       } else {
-        logger.info({ jid, to: customerNumber, length: prefixed.length }, 'Quo message sent');
+        logger.info(
+          { jid, to: customerNumber, length: prefixed.length },
+          'Quo message sent',
+        );
       }
     } catch (err) {
       logger.error({ jid, err }, 'Quo send error');
@@ -260,7 +291,10 @@ export class QuoChannel implements Channel {
 
   // ── Webhook handler ──────────────────────────────────────────────
 
-  private handleWebhook(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private handleWebhook(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ): void {
     let body = '';
     let bodySize = 0;
     const MAX_BODY_SIZE = 1_048_576; // 1MB
@@ -277,9 +311,14 @@ export class QuoChannel implements Channel {
     });
     req.on('end', () => {
       // Verify webhook signature
-      const signature = req.headers['openphone-signature'] as string | undefined;
+      const signature = req.headers['openphone-signature'] as
+        | string
+        | undefined;
       if (!verifyWebhookSignature(signature, body)) {
-        logger.warn({ hasSignature: !!signature }, 'Quo webhook signature verification failed');
+        logger.warn(
+          { hasSignature: !!signature },
+          'Quo webhook signature verification failed',
+        );
         audit('webhook_signature_failed', { hasSignature: !!signature });
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end('{"error":"invalid signature"}');
@@ -299,7 +338,10 @@ export class QuoChannel implements Channel {
 
       const result = WebhookPayloadSchema.safeParse(payload);
       if (!result.success) {
-        logger.warn({ errors: result.error.issues }, 'Quo webhook: payload validation failed');
+        logger.warn(
+          { errors: result.error.issues },
+          'Quo webhook: payload validation failed',
+        );
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end('{"error":"invalid payload"}');
         return;
@@ -312,7 +354,9 @@ export class QuoChannel implements Channel {
     });
   }
 
-  private processWebhookPayload(payload: z.infer<typeof WebhookPayloadSchema>): void {
+  private processWebhookPayload(
+    payload: z.infer<typeof WebhookPayloadSchema>,
+  ): void {
     if (payload.type !== 'message.received') return;
 
     const msg = payload.data?.object;
@@ -324,7 +368,10 @@ export class QuoChannel implements Channel {
   // ── Polling ──────────────────────────────────────────────────────
 
   private startPolling(): void {
-    logger.info({ intervalMs: POLL_INTERVAL_MS, lines: this.phoneLines.length }, 'Quo polling started');
+    logger.info(
+      { intervalMs: POLL_INTERVAL_MS, lines: this.phoneLines.length },
+      'Quo polling started',
+    );
 
     // Initial poll after a short delay
     setTimeout(() => this.pollAllLines(), 3000);
@@ -349,18 +396,24 @@ export class QuoChannel implements Channel {
     url.searchParams.set('maxResults', '10');
 
     const convRes = await fetch(url.toString(), {
-      headers: { 'Authorization': QUO_API_KEY },
+      headers: { Authorization: QUO_API_KEY },
     });
 
     if (!convRes.ok) return;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const convData = await convRes.json() as { data?: any[] };
+    const convData = (await convRes.json()) as {
+      data?: Array<{
+        id: string;
+        lastActivityId: string;
+        phoneNumberId?: string;
+        participants?: string[];
+      }>;
+    };
     if (!convData.data) return;
 
     // Filter to conversations belonging to this phone line
     const lineConvs = convData.data.filter(
-      (c: { phoneNumberId?: string }) => c.phoneNumberId === line.phoneId
+      (c) => c.phoneNumberId === line.phoneId,
     );
 
     for (const conv of lineConvs) {
@@ -377,7 +430,14 @@ export class QuoChannel implements Channel {
       if (lastActivityId === prevActivityId) continue;
 
       // New activity detected — fetch recent messages
-      logger.info({ convId: conv.id, phone: line.number, participants: conv.participants }, 'Quo poll: new activity detected');
+      logger.info(
+        {
+          convId: conv.id,
+          phone: line.number,
+          participants: conv.participants,
+        },
+        'Quo poll: new activity detected',
+      );
       this.lastActivityByConversation.set(conv.id, lastActivityId);
 
       const participants: string[] = conv.participants || [];
@@ -387,7 +447,10 @@ export class QuoChannel implements Channel {
     }
   }
 
-  private async fetchNewMessages(line: PhoneLine, participants: string[]): Promise<void> {
+  private async fetchNewMessages(
+    line: PhoneLine,
+    participants: string[],
+  ): Promise<void> {
     const url = new URL(`${QUO_API_BASE}/messages`);
     url.searchParams.set('phoneNumberId', line.phoneId);
     participants.forEach((p: string, i: number) => {
@@ -396,13 +459,23 @@ export class QuoChannel implements Channel {
     url.searchParams.set('maxResults', '5');
 
     const msgRes = await fetch(url.toString(), {
-      headers: { 'Authorization': QUO_API_KEY },
+      headers: { Authorization: QUO_API_KEY },
     });
 
     if (!msgRes.ok) return;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const msgData = await msgRes.json() as { data?: any[] };
+    const msgData = (await msgRes.json()) as {
+      data?: Array<{
+        id?: string;
+        from?: string;
+        to?: string | string[];
+        text?: string;
+        body?: string;
+        phoneNumberId?: string;
+        direction?: string;
+        createdAt?: string;
+      }>;
+    };
     if (!msgData.data) return;
 
     // Process messages in chronological order (API returns newest first)
@@ -414,8 +487,19 @@ export class QuoChannel implements Channel {
 
   // ── Shared message processing ────────────────────────────────────
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private processMessage(msg: any, source: 'webhook' | 'poll'): void {
+  private processMessage(
+    msg: {
+      id?: string;
+      from?: string;
+      to?: string | string[];
+      text?: string;
+      body?: string;
+      phoneNumberId?: string;
+      direction?: string;
+      createdAt?: string;
+    },
+    source: 'webhook' | 'poll',
+  ): void {
     const msgId = msg.id;
     if (!msgId) return;
 
@@ -439,7 +523,10 @@ export class QuoChannel implements Channel {
     const line = this.phoneLines.find((l) => l.phoneId === msg.phoneNumberId);
     const jid = line ? `quo:${line.number}` : `quo:${businessNumber}`;
 
-    logger.info({ source, from: customerNumber, jid, msgId }, 'Quo inbound SMS');
+    logger.info(
+      { source, from: customerNumber, jid, msgId },
+      'Quo inbound SMS',
+    );
 
     // Track the customer number for reply routing
     this.lastSenderByJid.set(jid, customerNumber);
@@ -447,7 +534,11 @@ export class QuoChannel implements Channel {
     const timestamp = msg.createdAt || new Date().toISOString();
 
     // Update chat metadata
-    this.opts.onChatMetadata(jid, timestamp, `Quo ${line?.number || businessNumber}`);
+    this.opts.onChatMetadata(
+      jid,
+      timestamp,
+      `Quo ${line?.number || businessNumber}`,
+    );
 
     // Only deliver to registered groups
     const groups = this.opts.registeredGroups();
@@ -468,7 +559,11 @@ export class QuoChannel implements Channel {
 
     // Auto-create CRM contact from inbound SMS
     try {
-      upsertContactFromPhone(customerNumber, `quo:${line?.number || businessNumber}`, []);
+      upsertContactFromPhone(
+        customerNumber,
+        `quo:${line?.number || businessNumber}`,
+        [],
+      );
     } catch (err) {
       logger.debug({ err, phone: customerNumber }, 'CRM auto-create failed');
     }

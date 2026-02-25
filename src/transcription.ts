@@ -5,14 +5,18 @@
 import { GROQ_API_KEY } from './config.js';
 import { logger } from './logger.js';
 
-const GROQ_TRANSCRIPTION_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
+const GROQ_TRANSCRIPTION_URL =
+  'https://api.groq.com/openai/v1/audio/transcriptions';
 const WHISPER_MODEL = 'whisper-large-v3-turbo';
 
 /**
  * Transcribe an audio buffer using Groq's Whisper API.
  * Returns the transcript text, or null on failure.
  */
-export async function transcribeAudio(audioBuffer: Buffer, mimeType = 'audio/ogg'): Promise<string | null> {
+export async function transcribeAudio(
+  audioBuffer: Buffer,
+  mimeType = 'audio/ogg',
+): Promise<string | null> {
   if (!GROQ_API_KEY) {
     logger.debug('GROQ_API_KEY not set, skipping voice transcription');
     return null;
@@ -20,10 +24,13 @@ export async function transcribeAudio(audioBuffer: Buffer, mimeType = 'audio/ogg
 
   try {
     // Determine file extension from mime type
-    const ext = mimeType.includes('ogg') ? 'ogg'
-      : mimeType.includes('mp4') ? 'm4a'
-      : mimeType.includes('mpeg') ? 'mp3'
-      : 'ogg';
+    const ext = mimeType.includes('ogg')
+      ? 'ogg'
+      : mimeType.includes('mp4')
+        ? 'm4a'
+        : mimeType.includes('mpeg')
+          ? 'mp3'
+          : 'ogg';
 
     // Build multipart form data using native FormData
     const blob = new Blob([audioBuffer], { type: mimeType });
@@ -34,18 +41,21 @@ export async function transcribeAudio(audioBuffer: Buffer, mimeType = 'audio/ogg
     const response = await fetch(GROQ_TRANSCRIPTION_URL, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        Authorization: `Bearer ${GROQ_API_KEY}`,
       },
       body: formData,
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      logger.error({ status: response.status, body: errorText }, 'Groq transcription failed');
+      logger.error(
+        { status: response.status, body: errorText },
+        'Groq transcription failed',
+      );
       return null;
     }
 
-    const result = await response.json() as { text?: string };
+    const result = (await response.json()) as { text?: string };
     const transcript = result.text?.trim();
 
     if (!transcript) {

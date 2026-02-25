@@ -3,9 +3,21 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, HEALTH_CHECK_INTERVAL, MAIN_GROUP_FOLDER, STORE_DIR, TIMEZONE } from './config.js';
+import {
+  DATA_DIR,
+  HEALTH_CHECK_INTERVAL,
+  MAIN_GROUP_FOLDER,
+  STORE_DIR,
+  TIMEZONE,
+} from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
-import { getDueTasks, getHealthState, getLastMessageTimestamp, setHealthState, updateTask } from './db.js';
+import {
+  getDueTasks,
+  getHealthState,
+  getLastMessageTimestamp,
+  setHealthState,
+  updateTask,
+} from './db.js';
 import { logger } from './logger.js';
 import { Channel } from './types.js';
 
@@ -33,7 +45,9 @@ const startTime = Date.now();
 let alertedCriticalAt: number | null = null;
 
 function getWhatsAppChannel(channels: Channel[]): WhatsAppChannel | null {
-  return (channels.find((c) => c.name === 'whatsapp') as WhatsAppChannel) || null;
+  return (
+    (channels.find((c) => c.name === 'whatsapp') as WhatsAppChannel) || null
+  );
 }
 
 function checkAuthState(): boolean {
@@ -71,8 +85,13 @@ async function runHealthCheck(deps: HealthMonitorDeps): Promise<void> {
 
   if (healthInfo.protocolErrorCount >= 3 && wa) {
     status = 'critical';
-    issues.push(`Protocol error loop detected (${healthInfo.protocolErrorCount} errors in 10 min) — forcing reconnect`);
-    logger.warn({ protocolErrorCount: healthInfo.protocolErrorCount }, 'Protocol error loop — triggering force reconnect');
+    issues.push(
+      `Protocol error loop detected (${healthInfo.protocolErrorCount} errors in 10 min) — forcing reconnect`,
+    );
+    logger.warn(
+      { protocolErrorCount: healthInfo.protocolErrorCount },
+      'Protocol error loop — triggering force reconnect',
+    );
     try {
       await wa.forceReconnect();
       issues.push('Force reconnect initiated');
@@ -100,13 +119,29 @@ async function runHealthCheck(deps: HealthMonitorDeps): Promise<void> {
     for (const task of dueTasks) {
       if (task.schedule_type === 'cron' && task.next_run) {
         const staleness = now - new Date(task.next_run).getTime();
-        if (staleness > 30 * 60 * 1000) { // 30+ min stale
+        if (staleness > 30 * 60 * 1000) {
+          // 30+ min stale
           try {
-            const nextRun = CronExpressionParser.parse(task.schedule_value, { tz: TIMEZONE }).next().toISOString();
+            const nextRun = CronExpressionParser.parse(task.schedule_value, {
+              tz: TIMEZONE,
+            })
+              .next()
+              .toISOString();
             updateTask(task.id, { next_run: nextRun });
-            logger.warn({ taskId: task.id, staleMinutes: Math.round(staleness / 60000), nextRun }, 'Health monitor auto-fixed stale cron task');
-            issues.push(`Auto-fixed stale task ${task.id} (was ${Math.round(staleness / 60000)} min overdue)`);
-          } catch { /* invalid cron */ }
+            logger.warn(
+              {
+                taskId: task.id,
+                staleMinutes: Math.round(staleness / 60000),
+                nextRun,
+              },
+              'Health monitor auto-fixed stale cron task',
+            );
+            issues.push(
+              `Auto-fixed stale task ${task.id} (was ${Math.round(staleness / 60000)} min overdue)`,
+            );
+          } catch {
+            /* invalid cron */
+          }
         }
       }
     }
