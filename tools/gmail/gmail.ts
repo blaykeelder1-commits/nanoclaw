@@ -26,6 +26,7 @@
  */
 
 import { google, gmail_v1 } from 'googleapis';
+import { checkAndIncrementSendCount } from '../shared/send-rate-limit.js';
 
 type Action = 'list' | 'search' | 'read' | 'send' | 'reply' | 'labels';
 
@@ -306,6 +307,8 @@ async function sendMessage(gmail: gmail_v1.Gmail, userEmail: string, flags: Reco
     process.exit(1);
   }
 
+  checkAndIncrementSendCount();
+
   const raw = buildRawEmail({
     to: flags.to,
     from: userEmail,
@@ -335,6 +338,8 @@ async function replyToMessage(gmail: gmail_v1.Gmail, userEmail: string, flags: R
     }));
     process.exit(1);
   }
+
+  checkAndIncrementSendCount();
 
   // Get the original message to extract headers for threading
   const original = await gmail.users.messages.get({

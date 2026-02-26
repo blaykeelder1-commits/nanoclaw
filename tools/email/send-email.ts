@@ -8,6 +8,7 @@
  */
 
 import { createTransport } from 'nodemailer';
+import { checkAndIncrementSendCount } from '../shared/send-rate-limit.js';
 
 interface EmailArgs {
   to: string;
@@ -81,6 +82,7 @@ async function main() {
   if (args.replyTo) mailOptions.replyTo = args.replyTo;
 
   try {
+    checkAndIncrementSendCount();
     const info = await transporter.sendMail(mailOptions);
     console.log(JSON.stringify({
       status: 'success',

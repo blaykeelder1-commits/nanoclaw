@@ -209,48 +209,100 @@ function buildVolumeMounts(
 }
 
 /**
+ * Secret scoping: restrict which secrets non-main groups receive.
+ * Main gets everything. Non-main gets only what their tools need.
+ * This limits blast radius if a non-main container is prompt-injected.
+ */
+
+// Auth keys every container needs to call the Claude API
+const SECRETS_CORE = [
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+] as const;
+
+// Google APIs (Sheets, Calendar, Drive, Gmail) — needed by most groups
+const SECRETS_GOOGLE = [
+  'GOOGLE_SERVICE_ACCOUNT_KEY',
+  'GOOGLE_SPREADSHEET_ID',
+  'GOOGLE_CALENDAR_ID',
+  'GMAIL_USER_EMAIL',
+] as const;
+
+// Email sending (SMTP + Gmail send)
+const SECRETS_EMAIL = [
+  'SMTP_HOST',
+  'SMTP_PORT',
+  'SMTP_USER',
+  'SMTP_PASS',
+  'SMTP_FROM',
+] as const;
+
+// Social media posting (X, Facebook, LinkedIn)
+const SECRETS_SOCIAL = [
+  'X_API_KEY',
+  'X_API_SECRET',
+  'X_ACCESS_TOKEN',
+  'X_ACCESS_SECRET',
+  'FB_PAGE_ID',
+  'FB_PAGE_ACCESS_TOKEN',
+  'LINKEDIN_ACCESS_TOKEN',
+  'LINKEDIN_PERSON_URN',
+] as const;
+
+// Vending platform (IDDI)
+const SECRETS_IDDI = [
+  'IDDI_BASE_URL',
+  'IDDI_EMAIL',
+  'IDDI_PASSWORD',
+] as const;
+
+// Lead generation
+const SECRETS_LEADS = [
+  'GOOGLE_MAPS_API_KEY',
+] as const;
+
+// All secret keys (main group gets everything)
+const ALL_SECRET_KEYS = [
+  ...SECRETS_CORE,
+  ...SECRETS_EMAIL,
+  ...SECRETS_SOCIAL,
+  ...SECRETS_GOOGLE,
+  ...SECRETS_LEADS,
+  ...SECRETS_IDDI,
+] as const;
+
+// Non-main groups get core + google + email (enough for briefings, CRM, follow-ups)
+// They do NOT get social media keys, lead gen, or IDDI unless explicitly granted
+const STANDARD_SECRET_KEYS = [
+  ...SECRETS_CORE,
+  ...SECRETS_GOOGLE,
+  ...SECRETS_EMAIL,
+] as const;
+
+/** Map scope names to their secret key sets. */
+const SCOPE_MAP: Record<string, readonly string[]> = {
+  social: SECRETS_SOCIAL,
+  iddi: SECRETS_IDDI,
+  leads: SECRETS_LEADS,
+};
+
+/**
  * Read allowed secrets from .env for passing to the container via stdin.
  * Secrets are never written to disk or mounted as files.
+ * Non-main groups receive a restricted set to limit blast radius.
+ * Extra scopes can be granted via containerConfig.extraSecretScopes.
  */
-function readSecrets(): Record<string, string> {
-  return readEnvFile([
-    'CLAUDE_CODE_OAUTH_TOKEN',
-    'ANTHROPIC_API_KEY',
-    // Email outreach
-    'SMTP_HOST',
-    'SMTP_PORT',
-    'SMTP_USER',
-    'SMTP_PASS',
-    'SMTP_FROM',
-    // X/Twitter
-    'X_API_KEY',
-    'X_API_SECRET',
-    'X_ACCESS_TOKEN',
-    'X_ACCESS_SECRET',
-    // Facebook
-    'FB_PAGE_ID',
-    'FB_PAGE_ACCESS_TOKEN',
-    // LinkedIn
-    'LINKEDIN_ACCESS_TOKEN',
-    'LINKEDIN_PERSON_URN',
-    // Google Sheets
-    'GOOGLE_SERVICE_ACCOUNT_KEY',
-    'GOOGLE_SPREADSHEET_ID',
-    // Google Calendar
-    'GOOGLE_CALENDAR_ID',
-    // Google Maps (Places API for lead generation)
-    'GOOGLE_MAPS_API_KEY',
-    // Gmail API (domain-wide delegation)
-    'GMAIL_USER_EMAIL',
-    // IDDI vending platform
-    'IDDI_BASE_URL',
-    'IDDI_EMAIL',
-    'IDDI_PASSWORD',
-    // Quo Phone (OpenPhone) — host-side only, not passed to container
-    // 'QUO_API_KEY', 'QUO_SNAK_PHONE_ID', 'QUO_SHERIDAN_PHONE_ID',
-    // Groq (voice transcription) — host-side only
-    // 'GROQ_API_KEY',
-  ]);
+function readSecrets(isMain: boolean, extraScopes?: string[]): Record<string, string> {
+  if (isMain) return readEnvFile([...ALL_SECRET_KEYS]);
+
+  const keys: string[] = [...STANDARD_SECRET_KEYS];
+  if (extraScopes) {
+    for (const scope of extraScopes) {
+      const scopeKeys = SCOPE_MAP[scope];
+      if (scopeKeys) keys.push(...scopeKeys);
+    }
+  }
+  return readEnvFile(keys);
 }
 
 function buildContainerArgs(
@@ -372,7 +424,7 @@ export async function runContainerAgent(
     let stderrTruncated = false;
 
     // Pass secrets via stdin (never written to disk or mounted as files)
-    input.secrets = readSecrets();
+    input.secrets = readSecrets(input.isMain, group.containerConfig?.extraSecretScopes);
     container.stdin.write(JSON.stringify(input));
     container.stdin.end();
     // Remove secrets from input so they don't appear in logs

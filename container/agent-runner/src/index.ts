@@ -204,13 +204,21 @@ function createPreCompactHook(): HookCallback {
 // be visible to commands the agent runs.
 // NOTE: This list must stay in sync with readSecrets() in src/container-runner.ts.
 const SECRET_ENV_VARS = [
+  // Core auth
   'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN',
+  // SMTP email
   'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM',
+  // Social media
   'X_API_KEY', 'X_API_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_SECRET',
   'FB_PAGE_ID', 'FB_PAGE_ACCESS_TOKEN',
   'LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_PERSON_URN',
+  // Google APIs
   'GOOGLE_SERVICE_ACCOUNT_KEY', 'GOOGLE_SPREADSHEET_ID',
-  'GOOGLE_CALENDAR_ID',
+  'GOOGLE_CALENDAR_ID', 'GOOGLE_MAPS_API_KEY',
+  // Gmail
+  'GMAIL_USER_EMAIL',
+  // IDDI vending platform
+  'IDDI_BASE_URL', 'IDDI_EMAIL', 'IDDI_PASSWORD',
 ];
 
 function createSanitizeBashHook(): HookCallback {
@@ -544,8 +552,6 @@ async function main(): Promise<void> {
   try {
     const stdinData = await readStdin();
     containerInput = JSON.parse(stdinData);
-    // Delete the temp file the entrypoint wrote — it contains secrets
-    try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
     if (containerInput.outputNonce) {
       initMarkers(containerInput.outputNonce);
     }

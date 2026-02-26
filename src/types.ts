@@ -27,9 +27,14 @@ export interface AllowedRoot {
   description?: string;
 }
 
+export type SecretScope = 'social' | 'iddi' | 'leads';
+
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
+  /** Additional secret scopes beyond the standard set (core + google + email).
+   *  Main always gets all secrets regardless. Options: 'social', 'iddi', 'leads' */
+  extraSecretScopes?: SecretScope[];
 }
 
 export interface RegisteredGroup {

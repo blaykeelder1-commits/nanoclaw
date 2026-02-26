@@ -58,9 +58,9 @@ RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/
 
 # Create entrypoint script
 # Uses pre-compiled /app/dist/ from build step — no runtime tsc needed.
-# Secrets are passed via stdin JSON — temp file is deleted immediately after Node reads it.
+# Secrets are passed via stdin JSON — piped directly to node (never written to disk).
 # Follow-up messages arrive via IPC files in /workspace/ipc/input/
-RUN printf '#!/bin/bash\nset -e\ncat > /tmp/input.json\nnode /app/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+RUN printf '#!/bin/bash\nset -e\nexec node /app/dist/index.js\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
 RUN chown -R node:node /workspace
