@@ -357,21 +357,72 @@ export class WebChannel implements Channel {
 
   /**
    * Parse Andy's response for structured content.
-   * Andy can include buttons, cards, and payment links using tags:
+   * Andy can include buttons, price breakdowns, and payment links using tags:
    *
    * <buttons>Book Now|Check Availability|Ask a Question</buttons>
-   * <payment-link url="https://...">Pay Deposit</payment-link>
+   * <payment-link url="https://..." label="Pay $250 Deposit">Pay Deposit</payment-link>
+   * <price-breakdown title="RV Camper — 3 Nights" total="$525.00" deposit="$250.00" balance="$275.00">
+   *   3 nights x $150/night = $450.00
+   *   Generator (3 nights x $100) = $300.00
+   * </price-breakdown>
    */
   private parseResponse(text: string): {
     content: string;
     buttons?: Array<{ label: string; value: string }>;
     paymentLink?: string;
+    paymentLabel?: string;
+    priceBreakdown?: {
+      title: string;
+      items: Array<{ label: string; amount: string }>;
+      total: string;
+      deposit?: string;
+      balance?: string;
+    };
   } {
     const result: {
       content: string;
       buttons?: Array<{ label: string; value: string }>;
       paymentLink?: string;
+      paymentLabel?: string;
+      priceBreakdown?: {
+        title: string;
+        items: Array<{ label: string; amount: string }>;
+        total: string;
+        deposit?: string;
+        balance?: string;
+      };
     } = { content: text };
+
+    // Extract price breakdown
+    const priceMatch = text.match(
+      /<price-breakdown\s+title="([^"]+)"\s+total="([^"]+)"(?:\s+deposit="([^"]+)")?(?:\s+balance="([^"]+)")?\s*>([\s\S]*?)<\/price-breakdown>/,
+    );
+    if (priceMatch) {
+      const lines = priceMatch[5]
+        .trim()
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+      const items = lines.map((line) => {
+        // Parse "label = amount" or "label: amount"
+        const eqMatch = line.match(/^(.+?)\s*[=:]\s*(\$[\d,.]+)$/);
+        if (eqMatch) {
+          return { label: eqMatch[1].trim(), amount: eqMatch[2].trim() };
+        }
+        return { label: line, amount: '' };
+      });
+
+      result.priceBreakdown = {
+        title: priceMatch[1],
+        items,
+        total: priceMatch[2],
+        deposit: priceMatch[3] || undefined,
+        balance: priceMatch[4] || undefined,
+      };
+      result.content = result.content
+        .replace(/<price-breakdown[\s\S]*?<\/price-breakdown>/, '')
+        .trim();
+    }
 
     // Extract buttons: <buttons>Label1|Label2|Label3</buttons>
     const buttonsMatch = text.match(/<buttons>(.*?)<\/buttons>/s);
@@ -386,14 +437,15 @@ export class WebChannel implements Channel {
         .trim();
     }
 
-    // Extract payment link: <payment-link url="...">Label</payment-link>
+    // Extract payment link: <payment-link url="..." label="...">Text</payment-link>
     const paymentMatch = text.match(
-      /<payment-link\s+url="([^"]+)">(.*?)<\/payment-link>/s,
+      /<payment-link\s+url="([^"]+)"(?:\s+label="([^"]+)")?\s*>(.*?)<\/payment-link>/s,
     );
     if (paymentMatch) {
       result.paymentLink = paymentMatch[1];
+      result.paymentLabel = paymentMatch[2] || paymentMatch[3] || 'Complete Payment';
       result.content = result.content
-        .replace(/<payment-link\s+url="[^"]+">.*?<\/payment-link>/s, '')
+        .replace(/<payment-link[^>]*>.*?<\/payment-link>/s, '')
         .trim();
     }
 

@@ -202,6 +202,59 @@
   font-weight: 500;
 }
 
+/* Price breakdown card */
+.sr-price-card {
+  background: white;
+  border: 1px solid var(--sr-border);
+  border-radius: 10px;
+  padding: 14px;
+  width: 90%;
+  align-self: flex-start;
+}
+
+.sr-price-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--sr-text);
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--sr-primary);
+}
+
+.sr-price-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 13px;
+  color: var(--sr-text);
+}
+
+.sr-price-divider {
+  height: 1px;
+  background: var(--sr-border);
+  margin: 8px 0;
+}
+
+.sr-price-total {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--sr-text);
+  padding-top: 4px;
+}
+
+.sr-price-deposit {
+  color: var(--sr-primary);
+  font-weight: 600;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--sr-border);
+}
+
+.sr-price-balance {
+  color: var(--sr-text-light);
+  font-size: 12px;
+}
+
 /* Payment button */
 .sr-payment-btn {
   display: inline-block;

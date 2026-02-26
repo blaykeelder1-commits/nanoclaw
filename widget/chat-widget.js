@@ -76,6 +76,12 @@
     return container;
   }
 
+  function escapeHtml(str) {
+    var div = document.createElement('div');
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+  }
+
   function init() {
     loadCSS();
 
@@ -132,12 +138,65 @@
       }
     });
 
+    // Render a price breakdown card
+    function renderPriceBreakdown(breakdown) {
+      var card = document.createElement('div');
+      card.className = 'sr-price-card';
+
+      var title = document.createElement('div');
+      title.className = 'sr-price-title';
+      title.textContent = breakdown.title || 'Price Breakdown';
+      card.appendChild(title);
+
+      // Line items
+      if (breakdown.items && breakdown.items.length > 0) {
+        breakdown.items.forEach(function(item) {
+          var row = document.createElement('div');
+          row.className = 'sr-price-row';
+          row.innerHTML = '<span>' + escapeHtml(item.label) + '</span><span>' + escapeHtml(item.amount) + '</span>';
+          card.appendChild(row);
+        });
+      }
+
+      // Divider
+      var divider = document.createElement('div');
+      divider.className = 'sr-price-divider';
+      card.appendChild(divider);
+
+      // Total
+      var totalRow = document.createElement('div');
+      totalRow.className = 'sr-price-row sr-price-total';
+      totalRow.innerHTML = '<span>Total</span><span>' + escapeHtml(breakdown.total) + '</span>';
+      card.appendChild(totalRow);
+
+      // Deposit line
+      if (breakdown.deposit) {
+        var depRow = document.createElement('div');
+        depRow.className = 'sr-price-row sr-price-deposit';
+        depRow.innerHTML = '<span>Deposit (due now)</span><span>' + escapeHtml(breakdown.deposit) + '</span>';
+        card.appendChild(depRow);
+
+        var balRow = document.createElement('div');
+        balRow.className = 'sr-price-row sr-price-balance';
+        balRow.innerHTML = '<span>Balance (due at pickup)</span><span>' + escapeHtml(breakdown.balance) + '</span>';
+        card.appendChild(balRow);
+      }
+
+      return card;
+    }
+
     // Add message to chat
     function addMessage(sender, content, metadata) {
       var msg = document.createElement('div');
       msg.className = 'sr-message sr-message-' + (sender === 'user' ? 'user' : 'bot');
       msg.textContent = content;
       messagesEl.insertBefore(msg, typingEl);
+
+      // Add price breakdown card if present
+      if (metadata && metadata.priceBreakdown) {
+        var priceCard = renderPriceBreakdown(metadata.priceBreakdown);
+        messagesEl.insertBefore(priceCard, typingEl);
+      }
 
       // Add buttons if present
       if (metadata && metadata.buttons && metadata.buttons.length > 0) {
@@ -163,7 +222,7 @@
         linkEl.href = metadata.paymentLink;
         linkEl.target = '_blank';
         linkEl.rel = 'noopener noreferrer';
-        linkEl.textContent = 'Complete Payment';
+        linkEl.textContent = metadata.paymentLabel || 'Complete Payment';
         messagesEl.insertBefore(linkEl, typingEl);
       }
 
@@ -216,7 +275,9 @@
 
           addMessage('bot', data.content, {
             buttons: data.buttons,
-            paymentLink: data.paymentLink
+            paymentLink: data.paymentLink,
+            paymentLabel: data.paymentLabel,
+            priceBreakdown: data.priceBreakdown
           });
         });
 
