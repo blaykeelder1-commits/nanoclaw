@@ -115,6 +115,17 @@ function buildVolumeMounts(
         readonly: true,
       });
     }
+
+    // Mount tools directory read-only so non-main groups can use skills
+    // (all skills reference tools at /workspace/project/tools/...)
+    const toolsDir = path.join(projectRoot, 'tools');
+    if (fs.existsSync(toolsDir)) {
+      mounts.push({
+        hostPath: toolsDir,
+        containerPath: '/workspace/project/tools',
+        readonly: true,
+      });
+    }
   }
 
   // Per-group Claude sessions directory (isolated from other groups)
@@ -229,6 +240,8 @@ function readSecrets(): Record<string, string> {
     'GOOGLE_CALENDAR_ID',
     // Google Maps (Places API for lead generation)
     'GOOGLE_MAPS_API_KEY',
+    // Gmail API (domain-wide delegation)
+    'GMAIL_USER_EMAIL',
     // IDDI vending platform
     'IDDI_BASE_URL',
     'IDDI_EMAIL',
@@ -252,9 +265,9 @@ function buildContainerArgs(
     args.push(
       '--cap-drop=ALL',
       '--security-opt=no-new-privileges',
-      '--memory=512m',
+      '--memory=1024m',
       '--cpus=1',
-      '--pids-limit=256',
+      '--pids-limit=512',
     );
   }
 

@@ -304,11 +304,24 @@ async function main() {
         await freeBusy(cal, calendarId, flags);
         break;
     }
-  } catch (err) {
-    console.error(JSON.stringify({
-      status: 'error',
-      error: err instanceof Error ? err.message : String(err),
-    }));
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : String(err);
+    const statusCode = (err as { code?: number })?.code;
+    if (statusCode === 401 || statusCode === 403) {
+      console.error(JSON.stringify({
+        status: 'error',
+        error,
+        hint: `Google Calendar API returned ${statusCode}. Verify: (1) Calendar API is enabled in Google Cloud Console, (2) The calendar is shared with the service account email (found in GOOGLE_SERVICE_ACCOUNT_KEY → client_email) with at least "Make changes to events" permission, (3) GOOGLE_CALENDAR_ID is correct.`,
+      }));
+    } else if (statusCode === 404) {
+      console.error(JSON.stringify({
+        status: 'error',
+        error,
+        hint: 'Calendar or event not found. Check GOOGLE_CALENDAR_ID and ensure it is shared with the service account.',
+      }));
+    } else {
+      console.error(JSON.stringify({ status: 'error', error }));
+    }
     process.exit(1);
   }
 }

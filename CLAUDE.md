@@ -30,6 +30,7 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `container/skills/vending-inventory/` | Vending machine sales + inventory automation |
 | `container/skills/inventory-reconcile/` | Cross-source inventory reconciliation + blacklist engine |
 | `tools/inventory/reconcile.ts` | Unified reconciliation CLI (IDDI + Sheets → reorder/blacklist decisions) |
+| `container/skills/gmail/` | Gmail read/search/send/reply via API |
 | `container/skills/google-drive/` | Google Drive file access |
 | `container/skills/lead-finder/` | Lead generation (Maps, scraping, scoring) |
 | `tools/email/send-email.ts` | SMTP email sender |
@@ -45,6 +46,7 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `tools/leads/website-scraper.ts` | Website email/phone scraper |
 | `tools/sheets/sheets.ts` | Google Sheets API tool |
 | `tools/calendar/calendar.ts` | Google Calendar API tool |
+| `tools/gmail/gmail.ts` | Gmail API tool (domain-wide delegation) |
 | `deploy/setup-vps.sh` | VPS hardening and installation script |
 | `deploy/nanoclaw.service` | systemd service file |
 

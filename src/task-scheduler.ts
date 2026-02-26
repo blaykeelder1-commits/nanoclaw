@@ -126,8 +126,8 @@ async function runTask(
         chatJid: task.chat_jid,
         isMain,
         isScheduledTask: true,
-        model: MODEL_SCHEDULED,
-        maxBudgetUsd: BUDGET_SCHEDULED,
+        model: task.model || MODEL_SCHEDULED,
+        maxBudgetUsd: task.budget_usd ?? BUDGET_SCHEDULED,
       },
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),

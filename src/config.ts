@@ -103,6 +103,9 @@ export const MODEL_INTERACTIVE =
 export const BUDGET_SCHEDULED = parseFloat(
   process.env.BUDGET_SCHEDULED || '0.05',
 );
+export const BUDGET_SCHEDULED_HEAVY = parseFloat(
+  process.env.BUDGET_SCHEDULED_HEAVY || '0.50',
+);
 export const BUDGET_INTERACTIVE = parseFloat(
   process.env.BUDGET_INTERACTIVE || '0.50',
 );
