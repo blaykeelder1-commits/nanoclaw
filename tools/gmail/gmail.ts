@@ -141,14 +141,22 @@ function getHeader(headers: gmail_v1.Schema$MessagePartHeader[] | undefined, nam
   return headers?.find(h => h.name?.toLowerCase() === name.toLowerCase())?.value || '';
 }
 
+// Default Gmail search filter: exclude marketing categories, newsletters, and noreply senders.
+// Only returns real person-to-person business emails by default.
+const DEFAULT_INBOX_FILTER = '-category:promotions -category:social -category:updates -category:forums -from:noreply -from:no-reply -from:newsletter -from:notifications -from:mailer -from:marketing';
+
 async function listMessages(gmail: gmail_v1.Gmail, flags: Record<string, string>) {
   const maxResults = parseInt(flags['max-results'] || '10', 10);
-  const labelIds = flags.label ? [flags.label] : ['INBOX'];
+  // Use search query to filter out junk by default; --no-filter to get everything
+  const useFilter = flags['no-filter'] !== 'true';
+  const baseQuery = useFilter ? DEFAULT_INBOX_FILTER : '';
+  const userQuery = flags.query ? `${flags.query} ${baseQuery}`.trim() : baseQuery;
 
   const res = await gmail.users.messages.list({
     userId: 'me',
     maxResults,
-    labelIds,
+    labelIds: flags.label ? [flags.label] : ['INBOX'],
+    q: userQuery || undefined,
   });
 
   const messages = [];

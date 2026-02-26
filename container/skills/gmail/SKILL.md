@@ -6,15 +6,27 @@ allowed-tools: Bash(npx tsx /workspace/project/tools/gmail/gmail.ts *)
 
 # Gmail
 
+## IMPORTANT: Email triage rules
+
+The inbox gets heavy marketing/newsletter traffic. To avoid wasting time and credits:
+
+1. **`list` auto-filters junk** — promotions, social, updates, forums, noreply/newsletter senders are excluded by default. Only real person-to-person emails show up.
+2. **Only read emails relevant to Snak Group business** — customer inquiries, vendor communications, partnership requests, invoices, scheduling. Skip anything that looks automated or mass-sent.
+3. **Do NOT read or respond to**: newsletters, marketing emails, subscription notifications, automated alerts, spam, job board blasts, social media notifications, or promotional offers.
+4. **When scanning inbox for briefings**, use `list --max-results 5` to keep it tight. Only `read` a message if the subject/snippet looks like it needs a response.
+5. **Pass `--no-filter true`** only if the owner explicitly asks to see everything.
+
 ## Commands
 
-### List inbox messages
+### List inbox messages (filtered)
 
 ```bash
 npx tsx /workspace/project/tools/gmail/gmail.ts list [--max-results 10] [--label INBOX]
 ```
 
-Returns recent messages with id, subject, from, date, and snippet.
+Returns recent **real business emails** only (marketing/newsletters auto-excluded).
+
+To see everything including junk: `list --no-filter true`
 
 ### Search emails
 
