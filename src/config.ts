@@ -16,6 +16,8 @@ const envConfig = readEnvFile([
   'QUO_SHERIDAN_NUMBER',
   'QUO_WEBHOOK_PORT',
   'GROQ_API_KEY',
+  'WEB_CHANNEL_PORT',
+  'WEB_CHANNEL_ORIGINS',
 ]);
 
 export const ASSISTANT_NAME =
@@ -113,3 +115,13 @@ export const BUDGET_INTERACTIVE = parseFloat(
 // --- Groq (voice transcription) ---
 export const GROQ_API_KEY =
   process.env.GROQ_API_KEY || envConfig.GROQ_API_KEY || '';
+
+// --- Web Chat Channel ---
+export const WEB_CHANNEL_PORT = parseInt(
+  process.env.WEB_CHANNEL_PORT || envConfig.WEB_CHANNEL_PORT || '3200',
+  10,
+);
+export const WEB_CHANNEL_ORIGINS =
+  process.env.WEB_CHANNEL_ORIGINS ||
+  envConfig.WEB_CHANNEL_ORIGINS ||
+  'https://sheridanrentals.us,https://www.sheridanrentals.us,https://sheridantrailerrentals.us,https://www.sheridantrailerrentals.us';

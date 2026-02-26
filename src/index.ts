@@ -673,6 +673,21 @@ async function main(): Promise<void> {
     channels.push(quo);
   }
 
+  // Create Web Chat channel
+  {
+    const { WEB_CHANNEL_PORT } = await import("./config.js");
+    if (WEB_CHANNEL_PORT) {
+      const { WebChannel } = await import("./channels/web.js");
+      const web = new WebChannel({
+        onMessage: (chatJid, msg) => storeMessage(msg),
+        onChatMetadata: (chatJid, timestamp, name) =>
+          storeChatMetadata(chatJid, timestamp, name),
+        registeredGroups: () => registeredGroups,
+      });
+      channels.push(web);
+    }
+  }
+
   // Connect all channels
   await Promise.all(channels.map((ch) => ch.connect()));
 
