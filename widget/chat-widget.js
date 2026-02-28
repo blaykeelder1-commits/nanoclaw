@@ -7,13 +7,35 @@
   'use strict';
 
   var SCRIPT = document.currentScript;
-  var SERVER_URL = (SCRIPT && SCRIPT.getAttribute('data-server')) || window.SR_CHAT_SERVER || '';
+  var SERVER_URL = (SCRIPT && SCRIPT.getAttribute('data-server')) || window.SR_CHAT_SERVER || 'https://chat.sheridantrailerrentals.us';
 
   // Generate or restore visitor ID for session persistence
   var VISITOR_ID = null;
   try {
     VISITOR_ID = sessionStorage.getItem('sr_visitor_id');
   } catch (e) { /* private browsing */ }
+
+  // ── Language i18n ───────────────────────────────────────────────
+  var STRINGS = {
+    en: {
+      title: 'Sheridan Rentals',
+      subtitle: 'We typically reply instantly',
+      placeholder: 'Type a message...',
+      closeLabel: 'Close chat'
+    },
+    es: {
+      title: 'Sheridan Rentals',
+      subtitle: 'Respondemos al instante',
+      placeholder: 'Escribe un mensaje...',
+      closeLabel: 'Cerrar chat'
+    }
+  };
+
+  var currentLang = 'en';
+  try {
+    var saved = sessionStorage.getItem('sr_chat_lang');
+    if (saved === 'es') currentLang = 'es';
+  } catch (e) {}
 
   // Load Socket.IO client
   function loadSocketIO(callback) {
@@ -35,21 +57,28 @@
 
   // Build widget HTML
   function buildWidget() {
+    var s = STRINGS[currentLang];
     var container = document.createElement('div');
     container.id = 'sr-chat-widget';
     container.innerHTML =
       '<div id="sr-chat-window">' +
         '<div id="sr-chat-header">' +
           '<div>' +
-            '<h3>Sheridan Rentals</h3>' +
-            '<p>We typically reply instantly</p>' +
+            '<h3 id="sr-header-title">' + s.title + '</h3>' +
+            '<p id="sr-header-subtitle">' + s.subtitle + '</p>' +
           '</div>' +
-          '<button id="sr-chat-close" aria-label="Close chat">' +
-            '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
-              '<line x1="18" y1="6" x2="6" y2="18"></line>' +
-              '<line x1="6" y1="6" x2="18" y2="18"></line>' +
-            '</svg>' +
-          '</button>' +
+          '<div class="sr-header-actions">' +
+            '<div id="sr-lang-toggle" class="sr-lang-toggle">' +
+              '<button class="sr-lang-btn' + (currentLang === 'en' ? ' active' : '') + '" data-lang="en">EN</button>' +
+              '<button class="sr-lang-btn' + (currentLang === 'es' ? ' active' : '') + '" data-lang="es">ES</button>' +
+            '</div>' +
+            '<button id="sr-chat-close" aria-label="' + s.closeLabel + '">' +
+              '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                '<line x1="18" y1="6" x2="6" y2="18"></line>' +
+                '<line x1="6" y1="6" x2="18" y2="18"></line>' +
+              '</svg>' +
+            '</button>' +
+          '</div>' +
         '</div>' +
         '<div id="sr-chat-messages">' +
           '<div class="sr-typing" id="sr-typing">' +
@@ -59,7 +88,7 @@
           '</div>' +
         '</div>' +
         '<div id="sr-chat-input-area">' +
-          '<input type="text" id="sr-chat-input" placeholder="Type a message..." autocomplete="off">' +
+          '<input type="text" id="sr-chat-input" placeholder="' + s.placeholder + '" autocomplete="off">' +
           '<button id="sr-chat-send" aria-label="Send message">' +
             '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">' +
               '<path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>' +
@@ -82,6 +111,28 @@
     return div.innerHTML;
   }
 
+  function setLanguage(lang) {
+    currentLang = lang;
+    try { sessionStorage.setItem('sr_chat_lang', lang); } catch (e) {}
+
+    var s = STRINGS[lang];
+    var titleEl = document.getElementById('sr-header-title');
+    var subtitleEl = document.getElementById('sr-header-subtitle');
+    var inputEl = document.getElementById('sr-chat-input');
+    if (titleEl) titleEl.textContent = s.title;
+    if (subtitleEl) subtitleEl.textContent = s.subtitle;
+    if (inputEl) inputEl.placeholder = s.placeholder;
+
+    // Update toggle button active states
+    var btns = document.querySelectorAll('#sr-lang-toggle .sr-lang-btn');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('active', btns[i].getAttribute('data-lang') === lang);
+    }
+
+    // Dispatch event so booking form can sync
+    try { window.dispatchEvent(new CustomEvent('sr-lang-change', { detail: { lang: lang } })); } catch (e) {}
+  }
+
   function init() {
     loadCSS();
 
@@ -98,6 +149,14 @@
     var isOpen = false;
     var connected = false;
     var typingTimeout = null;
+
+    // Language toggle click handler
+    var langToggle = document.getElementById('sr-lang-toggle');
+    langToggle.addEventListener('click', function(e) {
+      var btn = e.target.closest('.sr-lang-btn');
+      if (!btn) return;
+      setLanguage(btn.getAttribute('data-lang'));
+    });
 
     // Toggle chat open/close
     bubble.addEventListener('click', function() {
@@ -123,7 +182,9 @@
     function sendMessage(text) {
       if (!text.trim() || !socket) return;
       addMessage('user', text);
-      socket.emit('message', { text: text });
+      // Prepend [SPANISH] tag if in Spanish mode
+      var outText = currentLang === 'es' ? '[SPANISH] ' + text : text;
+      socket.emit('message', { text: outText });
       inputEl.value = '';
     }
 

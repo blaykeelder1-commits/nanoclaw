@@ -60,7 +60,6 @@
   border-radius: var(--sr-radius);
   box-shadow: 0 8px 30px rgba(0,0,0,0.12);
   overflow: hidden;
-  display: flex;
   flex-direction: column;
 }
 
@@ -89,6 +88,43 @@
   margin: 2px 0 0;
   font-size: 12px;
   opacity: 0.85;
+}
+
+/* Header actions row */
+.sr-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Language toggle */
+.sr-lang-toggle {
+  display: flex;
+  background: rgba(255,255,255,0.15);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.sr-lang-btn {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.7);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  letter-spacing: 0.5px;
+}
+
+.sr-lang-btn.active {
+  background: rgba(255,255,255,0.25);
+  color: white;
+  border-radius: 12px;
+}
+
+.sr-lang-btn:hover:not(.active) {
+  color: rgba(255,255,255,0.9);
 }
 
 #sr-chat-close {

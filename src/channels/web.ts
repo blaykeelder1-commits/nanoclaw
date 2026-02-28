@@ -155,12 +155,6 @@ export class WebChannel implements Channel {
         return;
       }
 
-      // Square webhook endpoint
-      if (req.method === 'POST' && req.url === '/webhook/square') {
-        this.handleSquareWebhook(req, res);
-        return;
-      }
-
       res.writeHead(200);
       res.end('ok');
     });
@@ -494,51 +488,4 @@ export class WebChannel implements Channel {
     fs.createReadStream(filePath).pipe(res);
   }
 
-  // ── Square Webhook ───────────────────────────────────────────────
-
-  private handleSquareWebhook(
-    req: http.IncomingMessage,
-    res: http.ServerResponse,
-  ): void {
-    let body = '';
-    let bodySize = 0;
-    const MAX_BODY_SIZE = 1_048_576;
-
-    req.on('data', (chunk: Buffer) => {
-      bodySize += chunk.length;
-      if (bodySize > MAX_BODY_SIZE) {
-        res.writeHead(413);
-        res.end('{"error":"payload too large"}');
-        req.destroy();
-        return;
-      }
-      body += chunk;
-    });
-
-    req.on('end', () => {
-      res.writeHead(200);
-      res.end('{"ok":true}');
-
-      try {
-        const payload = JSON.parse(body);
-        if (payload.type === 'payment.completed') {
-          const payment = payload.data?.object?.payment;
-          if (payment) {
-            logger.info(
-              {
-                paymentId: payment.id,
-                amount: payment.amount_money?.amount,
-                status: payment.status,
-              },
-              'Square payment completed webhook',
-            );
-            // Payment confirmation will be picked up by Andy via the
-            // check-payment tool when customer says they've paid
-          }
-        }
-      } catch (err) {
-        logger.warn({ err }, 'Failed to parse Square webhook');
-      }
-    });
-  }
 }
