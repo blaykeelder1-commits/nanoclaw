@@ -157,3 +157,28 @@ agent-browser get text @e1  # Get product title
 agent-browser get attr @e2 href  # Get link URL
 agent-browser screenshot products.png
 ```
+
+## Performance & Reliability Tips
+
+### Prevent disconnects and timeouts
+- **Always wait for page load** after navigation: `agent-browser wait --load networkidle` (waits for all network requests to settle)
+- **Wait for specific elements** before interacting: `agent-browser wait @e1` or `agent-browser wait --text "Dashboard"`
+- **Use shorter snapshots** when pages are large: `agent-browser snapshot -i -c` (compact + interactive only) or scope to a section: `agent-browser snapshot -s "#main-content"`
+- **Close the browser** when done: `agent-browser close` — frees memory for future tasks
+
+### Handle slow or heavy pages (Sam's Club, vending dashboards)
+- After `agent-browser open <url>`, ALWAYS follow with `agent-browser wait --load networkidle` before taking a snapshot
+- If a page has lazy-loaded content, scroll first (`agent-browser scroll down 500`), then wait and re-snapshot
+- For login forms that redirect, use `agent-browser wait --url "**/dashboard"` to wait for the redirect to complete
+- If a click triggers a page load, wait after clicking: `agent-browser click @e1` then `agent-browser wait --load networkidle`
+
+### Retry on failure
+- If `agent-browser snapshot` returns empty or incomplete results, wait 2 seconds and retry: `agent-browser wait 2000` then `agent-browser snapshot -i`
+- If a click doesn't seem to work, try `agent-browser wait 1000` then re-snapshot to check the page state
+- If login state is lost, re-load saved auth: `agent-browser state load <name>.json` and retry
+
+### Memory efficiency
+- Prefer `snapshot -i` (interactive elements only) over full `snapshot` — much less output
+- Use `snapshot -s "CSS_SELECTOR"` to scope to specific page sections
+- Avoid taking screenshots unless needed for debugging — they use more memory than snapshots
+- Close the browser between separate browsing tasks if possible

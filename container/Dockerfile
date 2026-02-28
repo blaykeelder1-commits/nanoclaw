@@ -32,11 +32,19 @@ RUN apt-get purge -y curl git && apt-get autoremove -y
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install agent-browser, claude-code, and tool dependencies globally
-RUN npm install -g agent-browser @anthropic-ai/claude-code tsx typescript
+# Chromium performance optimizations for headless container environment
+ENV AGENT_BROWSER_LAUNCH_ARGS="--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-gpu --disable-software-rasterizer --disable-extensions --disable-background-networking --disable-default-apps --disable-sync --disable-translate --no-first-run --disable-features=TranslateUI --single-process"
+ENV AGENT_BROWSER_HEADLESS=true
 
-# Install tool dependencies (nodemailer for email, better-sqlite3 for CRM queries, googleapis for Sheets)
-RUN npm install -g nodemailer better-sqlite3 @types/nodemailer @types/better-sqlite3 googleapis
+# Install agent-browser, claude-code, and tool dependencies globally
+RUN npm install -g agent-browser@latest @anthropic-ai/claude-code tsx typescript
+
+# Install tool dependencies in /workspace/project so they're resolvable by tools
+# Tools run from /workspace/project/tools/ and need these packages on Node's resolution path
+RUN mkdir -p /workspace/project && cd /workspace/project && \
+    npm init -y && \
+    npm install --omit=dev googleapis nodemailer better-sqlite3 zod && \
+    chown -R node:node /workspace/project
 
 # Create app directory
 WORKDIR /app

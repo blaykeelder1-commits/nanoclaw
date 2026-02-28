@@ -78,7 +78,7 @@ function createSchema(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      folder TEXT NOT NULL UNIQUE,
+      folder TEXT NOT NULL,
       trigger_pattern TEXT NOT NULL,
       added_at TEXT NOT NULL,
       container_config TEXT,
@@ -473,6 +473,17 @@ export function getMessagesSince(
 }
 
 /** Get the most recent non-bot sender for a given chat JID. */
+/**
+ * Check if a message with this ID already exists in the database.
+ * Used by Gmail channel to prevent duplicate processing across restarts.
+ */
+export function messageExists(messageId: string): boolean {
+  const row = db
+    .prepare("SELECT 1 FROM messages WHERE id = ? LIMIT 1")
+    .get(messageId);
+  return !!row;
+}
+
 export function getLastSender(chatJid: string): string | null {
   const row = db
     .prepare(
@@ -1135,6 +1146,26 @@ export function logUsage(entry: UsageEntry): void {
     entry.cache_read_tokens,
     entry.timestamp,
   );
+}
+
+/**
+ * Get estimated daily spend in USD based on token usage.
+ * Uses Claude Sonnet 4.6 pricing: $3/1M input, $15/1M output, $0.30/1M cache read.
+ */
+export function getDailySpendUsd(): number {
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const row = db
+    .prepare(
+      `SELECT
+        COALESCE(SUM(input_tokens), 0) as inp,
+        COALESCE(SUM(output_tokens), 0) as out,
+        COALESCE(SUM(cache_read_tokens), 0) as cache,
+        COUNT(*) as runs
+       FROM usage_log WHERE timestamp >= ?`,
+    )
+    .get(today + 'T00:00:00Z') as { inp: number; out: number; cache: number; runs: number };
+  // Pricing per million tokens (Sonnet 4.6)
+  return (row.inp * 3 + row.out * 15 + row.cache * 0.3) / 1_000_000;
 }
 
 export function getUsageStats(

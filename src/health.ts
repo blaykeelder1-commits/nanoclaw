@@ -1,3 +1,4 @@
+import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -20,6 +21,19 @@ import {
 } from './db.js';
 import { logger } from './logger.js';
 import { Channel } from './types.js';
+
+// Systemd watchdog: notify systemd we're still alive
+function notifyWatchdog(): void {
+  try {
+    if (!process.env.NOTIFY_SOCKET) return;
+    execSync('systemd-notify WATCHDOG=1', {
+      stdio: 'ignore',
+      timeout: 5000,
+    });
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'Watchdog ping failed');
+  }
+}
 
 export interface HealthMonitorDeps {
   channels: Channel[];
@@ -66,6 +80,9 @@ function isActiveHours(): boolean {
 }
 
 async function runHealthCheck(deps: HealthMonitorDeps): Promise<void> {
+  // Ping systemd watchdog — proves we're not hung
+  notifyWatchdog();
+
   const wa = getWhatsAppChannel(deps.channels);
   const healthInfo = wa?.getHealthInfo() ?? {
     connected: false,
@@ -156,6 +173,14 @@ async function runHealthCheck(deps: HealthMonitorDeps): Promise<void> {
     issues.push('Auth directory empty — QR re-authentication needed');
   }
 
+  // Check 5: Non-WhatsApp channel health
+  for (const ch of deps.channels) {
+    if (ch.name !== 'whatsapp' && !ch.isConnected()) {
+      if (status === 'ok') status = 'warning';
+      issues.push(`${ch.name} channel disconnected`);
+    }
+  }
+
   // Persist status
   setHealthState('status', status);
   setHealthState('issues', JSON.stringify(issues));
@@ -214,6 +239,25 @@ async function runHealthCheck(deps: HealthMonitorDeps): Promise<void> {
 
 export function startHealthMonitor(deps: HealthMonitorDeps): void {
   logger.info({ intervalMs: HEALTH_CHECK_INTERVAL }, 'Starting health monitor');
+
+  // Tell systemd we are ready + start watchdog pings
+  const notifySocket = process.env.NOTIFY_SOCKET;
+  logger.info({ notifySocket: notifySocket || '(not set)' }, 'Systemd notify socket');
+  if (notifySocket) {
+    try {
+      execSync('systemd-notify --ready', {
+        stdio: 'pipe',
+        timeout: 5000,
+      });
+      logger.info('Sent READY=1 to systemd');
+    } catch (err) {
+      logger.warn({ err: String(err) }, 'Failed to send READY=1');
+    }
+  }
+
+  // Ping watchdog more frequently than the health check interval
+  // WatchdogSec=120s, so ping every 30s to stay well within the timeout
+  setInterval(() => notifyWatchdog(), 30000);
 
   // Run first check after a short delay to let connections settle
   setTimeout(() => {

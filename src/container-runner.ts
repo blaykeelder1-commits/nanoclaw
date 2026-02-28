@@ -237,6 +237,13 @@ const SECRETS_EMAIL = [
   'SMTP_FROM',
 ] as const;
 
+// Square Payments
+const SECRETS_SQUARE = [
+  'SQUARE_ACCESS_TOKEN',
+  'SQUARE_LOCATION_ID',
+  'SQUARE_ENVIRONMENT',
+] as const;
+
 // Social media posting (X, Facebook, LinkedIn)
 const SECRETS_SOCIAL = [
   'X_API_KEY',
@@ -269,6 +276,7 @@ const ALL_SECRET_KEYS = [
   ...SECRETS_GOOGLE,
   ...SECRETS_LEADS,
   ...SECRETS_IDDI,
+  ...SECRETS_SQUARE,
 ] as const;
 
 // Non-main groups get core + google + email (enough for briefings, CRM, follow-ups)
@@ -277,6 +285,7 @@ const STANDARD_SECRET_KEYS = [
   ...SECRETS_CORE,
   ...SECRETS_GOOGLE,
   ...SECRETS_EMAIL,
+  ...SECRETS_SQUARE,
 ] as const;
 
 /** Map scope names to their secret key sets. */
@@ -317,9 +326,10 @@ function buildContainerArgs(
     args.push(
       '--cap-drop=ALL',
       '--security-opt=no-new-privileges',
-      '--memory=1024m',
-      '--cpus=1',
+      '--memory=2048m',
+      '--cpus=2',
       '--pids-limit=512',
+      '--shm-size=512m',
     );
   }
 

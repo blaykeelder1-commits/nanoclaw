@@ -222,3 +222,36 @@ Use WhatsApp formatting: single *bold*, _italic_, bullet points. No markdown hea
 - The owner manually updates Current Stock counts periodically
 - Sales Performance colors may be cell background colors or text values — check both
 - For HahaVending, prefer the direct URL method with date parameters to avoid extra navigation
+
+## Browser Reliability for Vending Sites
+
+### General rules for ALL browser navigation
+- After EVERY `agent-browser open <url>`, immediately run `agent-browser wait --load networkidle`
+- After EVERY `agent-browser click`, wait for the page to settle: `agent-browser wait --load networkidle` or `agent-browser wait 2000`
+- Use `agent-browser snapshot -i -c` (compact + interactive) to reduce output size on data-heavy pages
+- If a snapshot shows unexpected content (like a loading spinner), wait 3 seconds and retry
+
+### HahaVending specific
+- The login page sometimes redirects to `/pages/login/register` — if this happens, look for a "Login" text link and click it
+- After login, wait for redirect: `agent-browser wait --url "**/pages/index/index"` or `agent-browser wait 3000`
+- The Product Ranking page loads data asynchronously — after opening the direct URL, wait 3-5 seconds: `agent-browser wait 5000` then snapshot
+- If "Sales volume" column is not visible in snapshot, try: `agent-browser scroll right 200` then re-snapshot
+- Always save auth state after successful login to avoid re-logging in
+
+### Vendera specific
+- Dashboard loads multiple cards asynchronously — wait for network idle after login redirect
+- Product Sales Ranking has pagination — always check for "Page X of Y" text and click "Next >" until all pages are read
+- If the "Past Week" tab does not appear, the page may still be loading — wait and re-snapshot
+
+### Sam's Club specific
+- Sam's Club pages are JavaScript-heavy and load slowly — always wait 5 seconds after opening: `agent-browser wait 5000`
+- Search results load dynamically — after searching, wait for results: `agent-browser wait --text "results" --timeout 10000`
+- If Sam's Club shows a location/zip code prompt, dismiss it or fill in 77084 (Houston TX)
+- Product pages may show "member pricing" which requires login — use the visible non-member price
+- If the page shows a CAPTCHA or bot detection, stop and note it in the report — do not retry endlessly
+
+### Google Sheets via tool (not browser)
+- For reading/writing Google Sheets, use the sheets tool directly — do NOT use browser automation for Sheets
+- The sheets tool is faster and more reliable than browsing to sheets.google.com
+- Command: `npx tsx /workspace/project/tools/sheets/sheets.ts read --range "Tab Name!A:Z"`
+- For writing: `npx tsx /workspace/project/tools/sheets/sheets.ts write --range "Tab!A1" --values [[val1,val2]]`
