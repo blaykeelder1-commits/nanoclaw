@@ -110,6 +110,19 @@ export const BUDGET_INTERACTIVE = parseFloat(
   process.env.BUDGET_INTERACTIVE || '0.50',
 );
 
+// --- Web Channel (Socket.IO chat widget) ---
+export const WEB_CHANNEL_PORT = parseInt(
+  process.env.WEB_CHANNEL_PORT || '3200',
+  10,
+);
+export const WEB_CHANNEL_ORIGINS = (
+  process.env.WEB_CHANNEL_ORIGINS ||
+  'https://snakgroup.biz,https://www.snakgroup.biz'
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 // --- Groq (voice transcription) ---
 export const GROQ_API_KEY =
   process.env.GROQ_API_KEY || envConfig.GROQ_API_KEY || '';

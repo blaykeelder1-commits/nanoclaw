@@ -136,7 +136,9 @@ export function getAvailableGroups(): import('./container-runner.js').AvailableG
     .filter(
       (c) =>
         c.jid !== '__group_sync__' &&
-        (c.jid.endsWith('@g.us') || c.jid.startsWith('quo:')),
+        (c.jid.endsWith('@g.us') ||
+      c.jid.startsWith('quo:') ||
+      c.jid.startsWith('web:')),
     )
     .map((c) => ({
       jid: c.jid,
@@ -673,8 +675,31 @@ async function main(): Promise<void> {
     channels.push(quo);
   }
 
+  // Create Web channel (Socket.IO chat widget)
+  {
+    const { WebChannel } = await import('./channels/web.js');
+    const web = new WebChannel({
+      onMessage: (chatJid, msg) => storeMessage(msg),
+      onChatMetadata: (chatJid, timestamp, name) =>
+        storeChatMetadata(chatJid, timestamp, name),
+      registeredGroups: () => registeredGroups,
+    });
+    channels.push(web);
+  }
+
   // Connect all channels
   await Promise.all(channels.map((ch) => ch.connect()));
+
+  // Register web:snak-group JID if not already registered
+  if (!registeredGroups['web:snak-group']) {
+    registerGroup('web:snak-group', {
+      name: 'Snak Group Web Chat',
+      folder: 'snak-group',
+      trigger: '',
+      added_at: new Date().toISOString(),
+      requiresTrigger: false, // web chat always responds without trigger
+    });
+  }
 
   // Start health monitor
   startHealthMonitor({
