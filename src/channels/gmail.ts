@@ -223,6 +223,14 @@ export class GmailChannel implements Channel {
             const messageId = envelope.messageId || `uid-${uid}`;
             const date = envelope.date?.toISOString() || new Date().toISOString();
 
+            // Skip spam, newsletters, bounces, marketing emails
+            const rawHeaders = message.source ? message.source.toString('utf-8').split('\r\n\r\n')[0] : '';
+            if (shouldSkipEmail(senderEmail, senderName, subject, rawHeaders)) {
+              logger.debug({ from: senderEmail, subject, uid }, 'Skipping non-customer email');
+              processedUids.add(uid);
+              continue;
+            }
+
             // Skip emails from ourselves (case-insensitive, check multiple patterns)
             const selfAddresses = [
               IMAP_USER.toLowerCase(),
@@ -311,6 +319,49 @@ export class GmailChannel implements Channel {
       } catch { /* ignore */ }
     }
   }
+}
+
+/**
+ * Returns true if the email should be skipped (spam, newsletter, bounce, marketing).
+ */
+function shouldSkipEmail(senderEmail: string, senderName: string, subject: string, headers?: string): boolean {
+  const addr = senderEmail.toLowerCase();
+  const subj = subject.toLowerCase();
+
+  // Bounce / delivery status
+  if (addr.startsWith('mailer-daemon@') || addr.startsWith('postmaster@')) return true;
+  if (subj.includes('delivery status notification')) return true;
+  if (subj.includes('undeliverable') || subj.includes('mail delivery failed')) return true;
+
+  // No-reply / automated senders
+  if (addr.startsWith('noreply@') || addr.startsWith('no-reply@') || addr.startsWith('no_reply@')) return true;
+  if (addr.startsWith('donotreply@') || addr.startsWith('do-not-reply@')) return true;
+
+  // Common newsletter/marketing domains
+  const spamDomains = [
+    'amazonses.com', 'sendgrid.net', 'mailchimp.com', 'constantcontact.com',
+    'hubspot.com', 'marketo.com', 'pardot.com', 'campaign-archive.com',
+    'engage.canva.com', 'postcardmania.com', 'newsletters.fubo.tv',
+    'shopifyemail.com', 'messaging.squareup.com', 'googlemail.com',
+    'mail.chevronmobileapp.com',
+  ];
+  if (spamDomains.some(d => addr.endsWith('@' + d) || addr.endsWith('.' + d))) return true;
+
+  // Common newsletter patterns in sender address
+  const newsletterPatterns = [
+    'newsletter', 'marketing', 'promo', 'campaign', 'digest',
+    'notifications@', 'updates@', 'info@', 'news@', 'store+',
+    'stream@', 'offers@', 'deals@', 'sales@',
+  ];
+  if (newsletterPatterns.some(p => addr.includes(p))) return true;
+
+  // Unsubscribe indicator in subject
+  if (subj.includes('unsubscribe')) return true;
+
+  // Headers-based check: List-Unsubscribe header is a strong newsletter indicator
+  if (headers && /list-unsubscribe/i.test(headers)) return true;
+
+  return false;
 }
 
 /**

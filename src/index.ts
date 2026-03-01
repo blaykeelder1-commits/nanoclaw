@@ -687,6 +687,21 @@ async function main(): Promise<void> {
     channels.push(web);
   }
 
+  // Create Gmail (IMAP) channel if IMAP is configured
+  {
+    const { IMAP_HOST, IMAP_USER } = await import('./config.js');
+    if (IMAP_HOST && IMAP_USER) {
+      const { GmailChannel } = await import('./channels/gmail.js');
+      const gmail = new GmailChannel({
+        onMessage: (chatJid, msg) => storeMessage(msg),
+        onChatMetadata: (chatJid, timestamp, name) =>
+          storeChatMetadata(chatJid, timestamp, name),
+        registeredGroups: () => registeredGroups,
+      });
+      channels.push(gmail);
+    }
+  }
+
   // Connect all channels
   await Promise.all(channels.map((ch) => ch.connect()));
 
