@@ -168,6 +168,9 @@ export class GmailChannel implements Channel {
     this.pollTimer = setInterval(() => this.pollInbox(), GMAIL_POLL_INTERVAL);
   }
 
+  /** Track the highest UID we've seen so we only process newer messages. */
+  private lastSeenUid = 0;
+
   private async pollInbox(): Promise<void> {
     const client = new ImapFlow({
       host: IMAP_HOST,
@@ -185,9 +188,33 @@ export class GmailChannel implements Channel {
       const lock = await client.getMailboxLock('INBOX');
 
       try {
-        // Search for unseen messages
-        const searchResult = await client.search({ seen: false }, { uid: true });
-        const uids = Array.isArray(searchResult) ? searchResult : [];
+        // Search for messages by UID range instead of unseen flag.
+        // Gmail auto-marks emails as read when another message in the same
+        // thread is read, so unseen-only search misses legitimate new emails.
+        let uids: number[];
+        if (this.lastSeenUid > 0) {
+          // Fetch messages with UID greater than our last seen
+          const searchResult = await client.search(
+            { uid: `${this.lastSeenUid + 1}:*` },
+            { uid: true },
+          );
+          uids = (Array.isArray(searchResult) ? searchResult : [])
+            .filter(uid => uid > this.lastSeenUid);
+        } else {
+          // First poll: only get unseen to avoid re-processing old mail
+          const searchResult = await client.search({ seen: false }, { uid: true });
+          uids = Array.isArray(searchResult) ? searchResult : [];
+          // Set lastSeenUid to highest UID in mailbox so future polls only get new mail
+          if (uids.length === 0) {
+            const allUids = await client.search({ all: true }, { uid: true });
+            const allArr = Array.isArray(allUids) ? allUids : [];
+            if (allArr.length > 0) {
+              this.lastSeenUid = Math.max(...allArr);
+              logger.debug({ lastSeenUid: this.lastSeenUid }, 'Gmail initial UID baseline set');
+            }
+            return;
+          }
+        }
 
         if (uids.length === 0) return;
 
@@ -267,6 +294,9 @@ export class GmailChannel implements Channel {
             this.lastSenderByJid.set(jid, senderEmail);
 
             processedUids.add(uid);
+
+            // Track highest UID for next poll
+            if (uid > this.lastSeenUid) this.lastSeenUid = uid;
 
             // Cap processed cache
             if (processedUids.size > MAX_PROCESSED_CACHE) {
