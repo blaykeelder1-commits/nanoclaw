@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { createConnection } from 'net';
 import fs from 'fs';
 import path from 'path';
 
@@ -22,17 +22,22 @@ import {
 import { logger } from './logger.js';
 import { Channel } from './types.js';
 
-// Systemd watchdog: notify systemd we're still alive
-function notifyWatchdog(): void {
+// Systemd watchdog: notify systemd we're still alive via NOTIFY_SOCKET
+function sdNotify(message: string): void {
+  const socketPath = process.env.NOTIFY_SOCKET;
+  if (!socketPath) return;
+
   try {
-    if (!process.env.NOTIFY_SOCKET) return;
-    execSync('systemd-notify WATCHDOG=1', {
-      stdio: 'ignore',
-      timeout: 5000,
-    });
-  } catch (err) {
-    logger.warn({ err: String(err) }, 'Watchdog ping failed');
+    const sock = createConnection({ path: socketPath });
+    sock.on('error', () => {}); // Silently ignore connection errors
+    sock.end(message);
+  } catch {
+    // Ignore — watchdog ping is best-effort
   }
+}
+
+function notifyWatchdog(): void {
+  sdNotify('WATCHDOG=1');
 }
 
 export interface HealthMonitorDeps {
@@ -76,7 +81,7 @@ function checkAuthState(): boolean {
 
 function isActiveHours(): boolean {
   const hour = new Date().getHours();
-  return hour >= 8 && hour <= 22;
+  return hour >= 9 && hour <= 18; // Business hours only — reduces false "no messages" warnings
 }
 
 async function runHealthCheck(deps: HealthMonitorDeps): Promise<void> {
@@ -244,15 +249,8 @@ export function startHealthMonitor(deps: HealthMonitorDeps): void {
   const notifySocket = process.env.NOTIFY_SOCKET;
   logger.info({ notifySocket: notifySocket || '(not set)' }, 'Systemd notify socket');
   if (notifySocket) {
-    try {
-      execSync('systemd-notify --ready', {
-        stdio: 'pipe',
-        timeout: 5000,
-      });
-      logger.info('Sent READY=1 to systemd');
-    } catch (err) {
-      logger.warn({ err: String(err) }, 'Failed to send READY=1');
-    }
+    sdNotify('READY=1');
+    logger.info('Sent READY=1 to systemd');
   }
 
   // Ping watchdog more frequently than the health check interval

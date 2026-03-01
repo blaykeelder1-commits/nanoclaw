@@ -19,7 +19,7 @@ import {
 
 // Use 'docker' on Linux, 'container' (Apple Container) on macOS
 const CONTAINER_CMD = os.platform() === 'linux' ? 'docker' : 'container';
-import { logUsage } from './db.js';
+import { getRecentMessages, logUsage } from './db.js';
 import { readEnvFile } from './env.js';
 import { audit, logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -361,6 +361,28 @@ function validateGroupFolder(folder: string): void {
   ) {
     throw new Error(`Invalid group folder name: ${folder}`);
   }
+}
+
+/**
+ * Write a snapshot of recent messages for the container to read.
+ * Called before scheduled tasks so agents can query cross-channel message activity.
+ */
+export function writeMessagesSnapshot(groupFolder: string): void {
+  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
+  fs.mkdirSync(groupIpcDir, { recursive: true });
+
+  const messages = getRecentMessages(48, 200);
+  const snapshotPath = path.join(groupIpcDir, 'recent_messages.json');
+  fs.writeFileSync(snapshotPath, JSON.stringify({
+    generatedAt: new Date().toISOString(),
+    messages: messages.map(m => ({
+      chat_jid: m.chat_jid,
+      sender_name: m.sender_name,
+      content: m.content,
+      timestamp: m.timestamp,
+      is_bot_message: !!m.is_bot_message,
+    })),
+  }, null, 2));
 }
 
 export async function runContainerAgent(

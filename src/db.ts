@@ -472,6 +472,18 @@ export function getMessagesSince(
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`) as NewMessage[];
 }
 
+export function getRecentMessages(hours: number, limit: number): NewMessage[] {
+  const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+  const sql = `
+    SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message
+    FROM messages
+    WHERE timestamp > ?
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `;
+  return db.prepare(sql).all(cutoff, limit) as NewMessage[];
+}
+
 /** Get the most recent non-bot sender for a given chat JID. */
 /**
  * Check if a message with this ID already exists in the database.

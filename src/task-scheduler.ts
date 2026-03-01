@@ -15,6 +15,7 @@ import {
 import {
   ContainerOutput,
   runContainerAgent,
+  writeMessagesSnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
@@ -75,6 +76,9 @@ async function runTask(
     });
     return;
   }
+
+  // Write messages snapshot so container can query cross-channel activity
+  writeMessagesSnapshot(task.group_folder);
 
   // Update tasks snapshot for container to read (filtered by group)
   const isMain = task.group_folder === MAIN_GROUP_FOLDER;
