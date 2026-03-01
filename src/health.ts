@@ -1,4 +1,4 @@
-import { createConnection } from 'net';
+import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -22,22 +22,21 @@ import {
 import { logger } from './logger.js';
 import { Channel } from './types.js';
 
-// Systemd watchdog: notify systemd we're still alive via NOTIFY_SOCKET
-function sdNotify(message: string): void {
-  const socketPath = process.env.NOTIFY_SOCKET;
-  if (!socketPath) return;
+// Systemd watchdog: notify systemd we're still alive
+function notifyWatchdog(): void {
+  if (!process.env.NOTIFY_SOCKET) return;
 
-  try {
-    const sock = createConnection({ path: socketPath });
-    sock.on('error', () => {}); // Silently ignore connection errors
-    sock.end(message);
-  } catch {
-    // Ignore — watchdog ping is best-effort
-  }
+  execFile('systemd-notify', ['WATCHDOG=1'], { timeout: 5000 }, () => {
+    // Best-effort: ignore errors
+  });
 }
 
-function notifyWatchdog(): void {
-  sdNotify('WATCHDOG=1');
+function notifyReady(): void {
+  if (!process.env.NOTIFY_SOCKET) return;
+
+  execFile('systemd-notify', ['--ready'], { timeout: 5000 }, (err) => {
+    if (err) logger.warn({ err: String(err) }, 'Failed to send READY=1');
+  });
 }
 
 export interface HealthMonitorDeps {
@@ -249,7 +248,7 @@ export function startHealthMonitor(deps: HealthMonitorDeps): void {
   const notifySocket = process.env.NOTIFY_SOCKET;
   logger.info({ notifySocket: notifySocket || '(not set)' }, 'Systemd notify socket');
   if (notifySocket) {
-    sdNotify('READY=1');
+    notifyReady();
     logger.info('Sent READY=1 to systemd');
   }
 
