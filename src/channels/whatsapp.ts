@@ -317,6 +317,11 @@ export class WhatsAppChannel implements Channel {
 
     if (!this.connected) {
       this.outgoingQueue.push({ jid, text: prefixed });
+      // Cap queue at 100 messages to prevent memory leak during extended disconnects
+      if (this.outgoingQueue.length > 100) {
+        const dropped = this.outgoingQueue.shift();
+        logger.warn({ jid: dropped?.jid, queueSize: this.outgoingQueue.length }, 'Queue cap exceeded, dropped oldest message');
+      }
       logger.info(
         { jid, length: prefixed.length, queueSize: this.outgoingQueue.length },
         'WA disconnected, message queued',
@@ -507,13 +512,22 @@ export class WhatsAppChannel implements Channel {
         'Flushing outgoing message queue',
       );
       while (this.outgoingQueue.length > 0) {
-        const item = this.outgoingQueue.shift()!;
-        // Send directly — queued items are already prefixed by sendMessage
-        await this.sock.sendMessage(item.jid, { text: item.text });
-        logger.info(
-          { jid: item.jid, length: item.text.length },
-          'Queued message sent',
-        );
+        const item = this.outgoingQueue[0]; // peek, don't shift yet
+        try {
+          await this.sock.sendMessage(item.jid, { text: item.text });
+          this.outgoingQueue.shift(); // only remove after successful send
+          logger.info(
+            { jid: item.jid, length: item.text.length },
+            'Queued message sent',
+          );
+        } catch (err) {
+          // Send failed — stop flushing, keep remaining messages for next reconnect
+          logger.warn(
+            { jid: item.jid, err, remaining: this.outgoingQueue.length },
+            'Queue flush failed, will retry on next reconnect',
+          );
+          break;
+        }
       }
     } finally {
       this.flushing = false;

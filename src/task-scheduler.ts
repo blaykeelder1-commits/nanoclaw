@@ -258,6 +258,21 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
           }
         }
 
+        // Advance next_run BEFORE enqueueing to prevent the 60s scheduler poll
+        // from re-finding this task as "due" before it finishes executing.
+        if (currentTask.schedule_type === 'cron') {
+          try {
+            const preAdvanceNextRun = CronExpressionParser.parse(
+              currentTask.schedule_value,
+              { tz: TIMEZONE },
+            ).next().toISOString();
+            updateTask(currentTask.id, { next_run: preAdvanceNextRun });
+          } catch { /* runTask will handle the error */ }
+        } else if (currentTask.schedule_type === 'once') {
+          // Mark once-tasks as paused immediately to prevent double-fire
+          updateTask(currentTask.id, { status: 'paused' });
+        }
+
         deps.queue.enqueueTask(currentTask.chat_jid, currentTask.id, () =>
           runTask(currentTask, deps),
         );
