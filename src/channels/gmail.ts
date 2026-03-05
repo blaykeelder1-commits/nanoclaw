@@ -146,7 +146,7 @@ export class GmailChannel implements Channel {
         from: `${fromLabel} <${fromAddress}>`,
         to: replyContext.email,
         subject: replySubject,
-        text,
+        text: text.replace(/\\([!?.#*_~`>|\[\](){}+\-])/g, '$1'),
       });
       logger.info({ jid, to: replyContext.email, subject: replySubject, length: text.length }, 'Gmail reply sent');
     } catch (err) {
