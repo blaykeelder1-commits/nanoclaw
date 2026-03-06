@@ -64,7 +64,7 @@ async function postToFacebook(args: FacebookArgs): Promise<void> {
   }
 
   const postData = params.toString();
-  const url = `https://graph.facebook.com/v19.0${endpoint}`;
+  const url = `https://graph.facebook.com/v21.0${endpoint}`;
 
   return new Promise((resolve) => {
     const req = https.request(url, {

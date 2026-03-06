@@ -1,7 +1,7 @@
 ---
 name: vending-inventory
 description: Track vending machine inventory by pulling sales data from HahaVending and Vendera, updating the Google Sheets inventory spreadsheet, and generating shopping lists. Use for any vending-related questions about sales, inventory, or restocking.
-allowed-tools: Bash(agent-browser:*), Bash(npx tsx /workspace/project/tools/sheets/sheets.ts *)
+allowed-tools: Bash(agent-browser:*), Bash(npx tsx /workspace/project/tools/sheets/sheets.ts *), Bash(npx tsx /workspace/project/tools/inventory/reconcile.ts *)
 ---
 
 # Vending Machine Inventory Automation
@@ -11,9 +11,10 @@ allowed-tools: Bash(agent-browser:*), Bash(npx tsx /workspace/project/tools/shee
 Weekly automation (runs every Friday at 7pm Central):
 1. Log into HahaVending and Vendera to pull the full week's sales
 2. Update the Google Sheets inventory spreadsheet
-3. Generate a shopping list based on warehouse stock levels + sales performance
-4. Search for replacement products when items are blacklisted
-5. Send summary + shopping list via WhatsApp
+3. **Run `reconcile full`** to cross-examine all sources (IDDI + Sheets)
+4. Use reconciliation output to generate the WhatsApp report (shopping list, blacklist alerts, discrepancies)
+5. Search for replacement products when items are blacklisted
+6. Send summary + shopping list via WhatsApp
 
 ## MANDATORY RULES
 
@@ -254,6 +255,23 @@ Record this week's sales in the correct week column (1, 2, 3, or 4). After week 
 ### 3. Update Warehouse Inventory
 
 Subtract this week's total sold from Current Stock (column C).
+
+### 4. Run Reconciliation
+
+After updating Sheets, run the reconciliation engine to cross-examine everything:
+
+```bash
+npx tsx /workspace/project/tools/inventory/reconcile.ts full --yo-offset 2
+```
+
+This pulls IDDI data + the freshly-updated Sheets data, builds a unified view, and produces:
+- `reorder_list` — What to buy (drives the shopping list section)
+- `blacklist_warnings` — Products approaching blacklist (1-3 red weeks)
+- `blacklist_now` — Products hitting 4 red weeks (drives the blacklist section)
+- `coming_off_blacklist` — Products eligible to retry
+- `discrepancies` — Products in one source but not the other
+
+**Use this output to generate the WhatsApp report** instead of manually reading each sheet. The reconciliation engine already applies the reorder matrix and blacklist logic.
 
 ## Shopping List Format (WhatsApp)
 
