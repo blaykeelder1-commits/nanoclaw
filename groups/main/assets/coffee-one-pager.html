@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SNAK Group — Premium Coffee Solutions</title>
+<style>
+  @page { size: letter; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Arial, Helvetica, sans-serif; color: #222; width: 8.5in; min-height: 11in; margin: 0 auto; background: #fff; }
+
+  .header { background: linear-gradient(135deg, #1B5E20, #2E7D32); color: #fff; padding: 40px 50px 30px; display: flex; justify-content: space-between; align-items: center; }
+  .header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+  .header .tagline { font-size: 14px; opacity: 0.9; margin-top: 4px; }
+  .header .logo-area { text-align: right; font-size: 22px; font-weight: 700; letter-spacing: 2px; }
+
+  .hero-banner { background: #E8F5E9; padding: 30px 50px; border-bottom: 3px solid #1B5E20; }
+  .hero-banner h2 { font-size: 24px; color: #1B5E20; margin-bottom: 8px; }
+  .hero-banner p { font-size: 15px; color: #444; line-height: 1.5; }
+
+  .content { padding: 30px 50px; }
+
+  .two-col { display: flex; gap: 30px; margin-bottom: 25px; }
+  .two-col .col { flex: 1; }
+
+  .section-title { font-size: 16px; font-weight: 700; color: #1B5E20; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; border-bottom: 2px solid #E8F5E9; padding-bottom: 6px; }
+
+  .machine-spec { background: #F5F5F5; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+  .machine-spec h3 { font-size: 18px; color: #1B5E20; margin-bottom: 8px; }
+  .machine-spec .award { display: inline-block; background: #FFF9C4; color: #F57F17; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; margin-bottom: 8px; }
+
+  .drink-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 10px; }
+  .drink-item { background: #E8F5E9; padding: 6px 10px; border-radius: 4px; font-size: 12px; text-align: center; color: #2E7D32; font-weight: 600; }
+
+  .benefits-list { list-style: none; }
+  .benefits-list li { padding: 8px 0; padding-left: 28px; position: relative; font-size: 14px; line-height: 1.5; border-bottom: 1px solid #f0f0f0; }
+  .benefits-list li:last-child { border-bottom: none; }
+  .benefits-list li::before { content: "✓"; position: absolute; left: 0; color: #1B5E20; font-weight: 700; font-size: 16px; }
+
+  .pricing-box { background: #1B5E20; color: #fff; border-radius: 8px; padding: 20px; margin: 20px 0; }
+  .pricing-box h3 { font-size: 16px; margin-bottom: 10px; }
+  .pricing-option { display: flex; gap: 15px; margin-bottom: 10px; }
+  .pricing-option .option { flex: 1; background: rgba(255,255,255,0.1); border-radius: 6px; padding: 12px; }
+  .pricing-option .option h4 { font-size: 13px; margin-bottom: 4px; color: #A5D6A7; }
+  .pricing-option .option p { font-size: 12px; line-height: 1.4; }
+
+  .stats-row { display: flex; gap: 15px; margin: 20px 0; }
+  .stat-box { flex: 1; text-align: center; background: #F5F5F5; border-radius: 8px; padding: 15px 10px; }
+  .stat-box .number { font-size: 28px; font-weight: 700; color: #1B5E20; }
+  .stat-box .label { font-size: 11px; color: #666; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  .cta-section { background: #E8F5E9; border-radius: 8px; padding: 20px 25px; text-align: center; margin-top: 20px; }
+  .cta-section h3 { color: #1B5E20; font-size: 18px; margin-bottom: 8px; }
+  .cta-section p { font-size: 13px; color: #555; margin-bottom: 12px; }
+  .cta-button { display: inline-block; background: #1B5E20; color: #fff; padding: 10px 30px; border-radius: 6px; text-decoration: none; font-weight: 700; font-size: 14px; }
+
+  .footer { padding: 15px 50px; text-align: center; font-size: 11px; color: #999; border-top: 1px solid #eee; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>Premium Coffee Solutions</h1>
+    <div class="tagline">Elevate your workplace. Zero hassle.</div>
+  </div>
+  <div class="logo-area">SNAK GROUP</div>
+</div>
+
+<div class="hero-banner">
+  <h2>Your Team Deserves Great Coffee</h2>
+  <p>We place award-winning bean-to-cup coffee machines in your workplace — fully installed, stocked, and maintained. Your employees get barista-quality drinks on demand without leaving the building.</p>
+</div>
+
+<div class="content">
+  <div class="machine-spec">
+    <span class="award">Silver Award — NY Product Design Awards 2023</span>
+    <h3>Vitro X1 Bean-to-Cup Machine</h3>
+    <p style="font-size: 13px; color: #555; margin-bottom: 10px;">Compact, elegant, and fully automatic. Fresh-ground beans for every cup. Touchscreen with patented touchless Distance Selection technology. Built-in Cantaloupe card reader for cashless payment.</p>
+    <div class="drink-grid">
+      <div class="drink-item">Espresso</div>
+      <div class="drink-item">Americano</div>
+      <div class="drink-item">Cappuccino</div>
+      <div class="drink-item">Latte</div>
+      <div class="drink-item">Mocha</div>
+      <div class="drink-item">Decaf Espresso</div>
+      <div class="drink-item">Hot Chocolate</div>
+      <div class="drink-item">Double Espresso</div>
+      <div class="drink-item">Flat White</div>
+      <div class="drink-item">Macchiato</div>
+      <div class="drink-item">Decaf Americano</div>
+      <div class="drink-item">Hot Water (Tea)</div>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div class="col">
+      <div class="section-title">Why SNAK Group Coffee?</div>
+      <ul class="benefits-list">
+        <li><strong>12 specialty drinks</strong> — fresh-ground espresso, lattes, cappuccinos, and more from bean to cup</li>
+        <li><strong>Zero upfront cost</strong> — we provide, install, and maintain everything</li>
+        <li><strong>Cashless & touchless</strong> — built-in card reader and touchless selection technology</li>
+        <li><strong>We handle restocking</strong> — beans, milk powder, cups, and cleaning are all on us</li>
+        <li><strong>Compact design</strong> — fits in any breakroom, lobby, or common area</li>
+        <li><strong>Boost retention</strong> — 46% of employees say quality amenities influence whether they stay</li>
+      </ul>
+    </div>
+    <div class="col">
+      <div class="section-title">Ideal Locations</div>
+      <ul class="benefits-list">
+        <li>Corporate offices (25+ employees)</li>
+        <li>Coworking spaces</li>
+        <li>Hotels & hospitality</li>
+        <li>Hospitals & medical centers</li>
+        <li>Universities & colleges</li>
+        <li>Warehouses & distribution centers</li>
+      </ul>
+
+      <div class="section-title" style="margin-top: 20px;">The Impact</div>
+      <div class="stats-row" style="margin: 10px 0;">
+        <div class="stat-box">
+          <div class="number">13%</div>
+          <div class="label">Productivity boost from happier employees</div>
+        </div>
+        <div class="stat-box">
+          <div class="number">$0</div>
+          <div class="label">Cost to your business to get started</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pricing-box">
+    <h3>Flexible Pricing — Choose What Works for You</h3>
+    <div class="pricing-option">
+      <div class="option">
+        <h4>Option A: Usage-Based</h4>
+        <p>We charge a flat rate per cup based on usage. You cover the cost of what's consumed — nothing more. Perfect for offices that want predictable costs.</p>
+      </div>
+      <div class="option">
+        <h4>Option B: Employee-Paid</h4>
+        <p>We install a card reader on the machine. Employees pay per drink at affordable prices. Zero cost to your business — the machine pays for itself.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="cta-section">
+    <h3>Ready to Elevate Your Breakroom?</h3>
+    <p>Schedule a free virtual consultation. We'll assess your space, recommend the right setup, and have you serving great coffee in days — not weeks.</p>
+    <a href="https://snakgroup.com/book" class="cta-button">Schedule a Free Consultation</a>
+    <p style="margin-top: 10px; font-size: 12px; color: #888;">snakgroupteam@snakgroup.biz &nbsp;|&nbsp; Houston, TX &nbsp;|&nbsp; Serving 10+ locations and growing</p>
+  </div>
+</div>
+
+<div class="footer">
+  &copy; SNAK Group — Premium Vending, Coffee & Ice Solutions in Houston, TX
+</div>
+
+</body>
+</html>

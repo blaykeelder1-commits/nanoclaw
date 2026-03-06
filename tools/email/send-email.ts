@@ -2,12 +2,16 @@
 /**
  * Send Email Tool for NanoClaw
  * Usage: npx tsx tools/email/send-email.ts --to "email" --subject "subject" --body "body" [--html]
+ *        [--template "path"] [--vars '{"key":"value"}'] [--attachments "a.pdf,b.pdf"]
+ *        [--inline-images "hero.jpg,logo.png"]
  *
  * Environment variables (set in container .env or passed via secrets):
  *   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
  */
 
 import { createTransport } from 'nodemailer';
+import { readFileSync } from 'fs';
+import { basename } from 'path';
 import { checkAndIncrementSendCount } from '../shared/send-rate-limit.js';
 
 interface EmailArgs {
@@ -18,6 +22,10 @@ interface EmailArgs {
   cc?: string;
   bcc?: string;
   replyTo?: string;
+  template?: string;
+  vars?: string;
+  attachments?: string;
+  'inline-images'?: string;
 }
 
 function parseArgs(): EmailArgs {
@@ -33,12 +41,54 @@ function parseArgs(): EmailArgs {
     }
   }
 
-  if (!result.to || !result.subject || !result.body) {
-    console.error('Usage: send-email --to "email" --subject "subject" --body "body" [--html] [--cc "email"] [--bcc "email"] [--replyTo "email"]');
+  // When --template is used, --body is not required
+  if (!result.to || !result.subject || (!result.body && !result.template)) {
+    console.error('Usage: send-email --to "email" --subject "subject" --body "body" [--html] [--cc "email"] [--bcc "email"] [--replyTo "email"] [--template "path"] [--vars \'{"key":"val"}\'] [--attachments "a.pdf,b.pdf"] [--inline-images "img1.jpg,img2.png"]');
     process.exit(1);
   }
 
   return result as unknown as EmailArgs;
+}
+
+function loadTemplate(templatePath: string, vars?: string): string {
+  let html = readFileSync(templatePath, 'utf-8');
+
+  if (vars) {
+    const variables: Record<string, string> = JSON.parse(vars);
+    for (const [key, value] of Object.entries(variables)) {
+      // Replace all occurrences of {{key}} with value
+      const pattern = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
+      html = html.replace(pattern, value);
+    }
+  }
+
+  return html;
+}
+
+function buildAttachments(attachmentPaths?: string, inlineImagePaths?: string) {
+  const attachments: Array<{ filename: string; path: string; cid?: string }> = [];
+
+  if (attachmentPaths) {
+    for (const filePath of attachmentPaths.split(',').map(p => p.trim()).filter(Boolean)) {
+      attachments.push({
+        filename: basename(filePath),
+        path: filePath,
+      });
+    }
+  }
+
+  if (inlineImagePaths) {
+    for (const filePath of inlineImagePaths.split(',').map(p => p.trim()).filter(Boolean)) {
+      const filename = basename(filePath);
+      attachments.push({
+        filename,
+        path: filePath,
+        cid: filename,
+      });
+    }
+  }
+
+  return attachments;
 }
 
 async function main() {
@@ -71,7 +121,10 @@ async function main() {
     subject: args.subject,
   };
 
-  if (args.html) {
+  // Template mode: load HTML from file and apply variable substitution
+  if (args.template) {
+    mailOptions.html = loadTemplate(args.template, args.vars);
+  } else if (args.html) {
     mailOptions.html = args.body;
   } else {
     mailOptions.text = args.body;
@@ -80,6 +133,12 @@ async function main() {
   if (args.cc) mailOptions.cc = args.cc;
   if (args.bcc) mailOptions.bcc = args.bcc;
   if (args.replyTo) mailOptions.replyTo = args.replyTo;
+
+  // Build attachments (file attachments + inline CID images)
+  const attachments = buildAttachments(args.attachments, args['inline-images']);
+  if (attachments.length > 0) {
+    mailOptions.attachments = attachments;
+  }
 
   try {
     checkAndIncrementSendCount();

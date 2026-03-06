@@ -33,10 +33,16 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `container/skills/gmail/` | Gmail read/search/send/reply via API |
 | `container/skills/google-drive/` | Google Drive file access |
 | `container/skills/lead-finder/` | Lead generation (Maps, scraping, scoring) |
-| `tools/email/send-email.ts` | SMTP email sender |
+| `container/skills/viral-content/` | Viral content engine (trend scraping, pattern learning, remixing) |
+| `tools/email/send-email.ts` | SMTP email sender (supports HTML templates, attachments, inline images) |
+| `tools/email/templates/` | HTML email templates (coffee-intro, vending-intro, ice-machine-intro, case-study, follow-up) |
 | `tools/social/post-tweet.ts` | X/Twitter API poster |
 | `tools/social/post-facebook.ts` | Facebook Graph API poster |
 | `tools/social/post-linkedin.ts` | LinkedIn API poster |
+| `tools/social/linkedin-connect.ts` | LinkedIn connection requests and messaging |
+| `tools/social/trend-scraper.ts` | Trend monitoring and viral pattern analysis |
+| `groups/main/assets/` | Product photos, PDFs, video thumbnails for email campaigns |
+| `groups/main/viral-patterns.md` | Evolving viral content patterns knowledge file |
 | `tools/crm/import-apollo.ts` | Apollo.io CSV lead importer |
 | `tools/crm/query-contacts.ts` | CRM contact query utility |
 | `tools/crm/lead-score.ts` | Lead scoring engine (0-100) |

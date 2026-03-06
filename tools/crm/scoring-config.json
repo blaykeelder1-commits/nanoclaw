@@ -15,7 +15,10 @@
     "hr": 10,
     "human resources": 10,
     "admin": 10,
-    "administrator": 10
+    "administrator": 10,
+    "property manager": 20,
+    "general manager": 20,
+    "superintendent": 15
   },
   "industryKeywords": {
     "manufacturing": 20,
@@ -32,7 +35,11 @@
     "retail": 10,
     "automotive": 10,
     "food_service": 10,
-    "finance": 10
+    "finance": 10,
+    "trucking": 15,
+    "shipping": 15,
+    "logistics": 15,
+    "coworking": 20
   },
   "locationBonus": {
     "Houston": 10,
@@ -70,6 +77,16 @@
     "center": 5,
     "building": 5,
     "tower": 5,
-    "coffee": 10
+    "coffee": 10,
+    "dealership": 15,
+    "amazon": 15,
+    "trucking": 15,
+    "shipping": 15,
+    "logistics": 15,
+    "cowork": 15,
+    "apartment": 10,
+    "complex": 10,
+    "university": 15,
+    "college": 15
   }
 }

@@ -256,3 +256,71 @@ You have a daily scheduled task. When it fires:
 1. Check Google Calendar for tomorrow's events and the next 7 days
 2. Email snakgroupteam@snakgroup.biz with subject "Daily Update - [Date]"
 3. Include: upcoming appointments, scheduled pickups/returns, any pending inquiries
+
+---
+
+## Marketing Automation Loop
+
+You run an autonomous marketing engine to generate 2+ vending/coffee clients per month. Coffee machines are the primary focus (higher margins, less ops). Here is the full daily/weekly cycle:
+
+### Weekly Tasks
+
+| Day/Time | Task |
+|----------|------|
+| Mon 7 AM | Scrape new leads from Google Maps (all target verticals in Houston), enrich with website scraper, score, and tag (`coffee-primary`, `vending-primary`, `ice-machine-fit`) |
+| Fri 6 PM | Weekly report: leads contacted, replies, meetings booked, content performance, top-performing formats |
+
+### Daily Tasks
+
+| Time | Task |
+|------|------|
+| 8 AM | Scan trending content via `trend-scraper`, update `viral-patterns.md` |
+| 9 AM | Morning outreach: send HTML emails (templates + attachments) to top-scored leads |
+| 10 AM | Post to LinkedIn + engage with comments on relevant posts |
+| 11 AM | Follow-up emails on existing sequences (day 3, 7, 14) |
+| 12 PM | Post to X/Twitter + Facebook (adapted content, never identical) |
+| 2 PM | Send LinkedIn connection requests (10-20, personalized notes) |
+| Wed 3 PM | Create "viral attempt" content based on trend analysis |
+
+### Target Lead Verticals (Houston TX)
+
+- Office buildings, coworking spaces
+- Gyms, fitness centers
+- Hotels
+- Car dealerships
+- Hospitals, medical centers
+- Universities, colleges, schools
+- Apartment complexes
+- Warehouses, manufacturers
+- Amazon warehouses
+- Trucking, shipping yards
+
+### Service Targeting by Lead Type
+
+- **Coffee-primary**: Offices 50+ employees, coworking spaces, hotels, hospitals, universities
+- **Vending-primary**: Gyms, apartments, car dealerships, warehouses, manufacturers, trucking yards, schools
+- **Ice-machine-fit**: Hotels, hospitals, gyms, restaurants, car dealerships
+
+### Outreach Sequence (Using HTML Templates)
+
+1. **First touch**: HTML template (coffee-intro / vending-intro / ice-machine-intro based on tag) with hero image + PDF one-pager attached
+2. **Follow-up 1 (Day 3)**: Case study template with ROI numbers
+3. **Follow-up 2 (Day 7)**: Follow-up template with video thumbnail + "see it in action" link
+4. **Break-up (Day 14)**: Simple plain text — keeps it personal
+
+### Key Metrics to Track
+
+- Leads scraped per week
+- Emails sent / opened / replied
+- LinkedIn connections sent / accepted
+- Social posts / engagement rate
+- Meetings booked
+- Deals closed
+- Best-performing content formats
+
+### Content Strategy
+
+- 2-3 "viral attempt" posts per week mixed into regular content
+- Analyze what works via `trend-scraper analyze` and double down
+- Maintain and evolve `viral-patterns.md` based on performance data
+- Cross-post adapted versions (never identical) to LinkedIn, X, Facebook

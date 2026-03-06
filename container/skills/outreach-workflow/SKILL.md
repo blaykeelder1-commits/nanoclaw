@@ -63,52 +63,79 @@ Report should include:
 
 ## Lead List Refresh (Monday, 7 AM)
 
-Check for new CSV files and import:
+Automated lead generation pipeline using Google Maps scraping. See the `lead-finder` skill for full command details.
+
+### Pipeline Steps
+
+1. **Google Maps scraping** -- Run searches for all 13 target verticals in Houston:
+   - Office buildings, coworking spaces, gyms/fitness, hotels, car dealerships
+   - Hospitals/medical centers, universities/colleges, schools
+   - Apartment complexes, warehouses, manufacturers, Amazon warehouses, trucking/shipping yards
+   - Each search uses `--import --tags "maps,{vertical},2026-W{week}"` with `--limit 60`
+
+2. **Website enrichment** -- Batch scrape new imports for emails and phone numbers:
+   ```bash
+   npx tsx /workspace/project/tools/leads/website-scraper.ts batch --source google_maps --limit 50
+   ```
+
+3. **Lead scoring** -- Score all new contacts:
+   ```bash
+   npx tsx /workspace/project/tools/crm/lead-score.ts batch --source google_maps --limit 200
+   ```
+
+4. **Smart service tagging** -- Apply service-fit tags based on industry:
+   - `coffee-primary`: offices 50+ employees, coworking, hotels, hospitals, universities
+   - `vending-primary`: gyms, apartments, dealerships, warehouses, manufacturers, trucking, schools
+   - `ice-machine-fit`: hotels, hospitals, gyms, restaurants, dealerships
+   - A lead can have multiple tags (e.g., hotel = coffee-primary + ice-machine-fit)
+
+5. **WhatsApp report** -- Send summary: new leads, enriched count, score distribution, top 5 hottest
+
+### Legacy Apollo Import
+
+Still available for manual CSV imports:
 ```bash
-npx tsx /workspace/project/tools/crm/import-apollo.ts /workspace/group/apollo-export.csv --tags "week-XX"
+npx tsx /workspace/project/tools/crm/import-apollo.ts /workspace/group/apollo-export.csv --tags "apollo,week-XX"
 ```
 
 ## Email Templates
 
-### Initial Outreach
+### Initial Outreach (First Touch)
+Use the appropriate HTML template based on lead's service tag:
+- **coffee-primary leads**: Use `coffee-intro.html` template with hero image + attach PDF one-pager
+- **vending-primary leads**: Use `vending-intro.html` template with hero image + attach PDF one-pager
+- **ice-machine-fit leads**: Use `ice-machine-intro.html` template with hero image + attach PDF one-pager
+
 Subject: [Personalized - mention their company/role]
 
-Hi {first_name},
-
-[1 sentence about why you're reaching out, referencing something specific about their company]
-
-[1-2 sentences about the value you can provide]
-
-[Clear CTA - suggest a specific time or ask a specific question]
-
-Best,
-[Your name]
+Personalize the HTML template by:
+- Inserting their company name and first name
+- Referencing something specific about their business (location, size, industry)
+- Including one clear CTA (schedule a free site survey)
 
 ### Follow-Up 1 (Day 3)
+Use `case-study.html` template with ROI numbers relevant to their industry.
+
 Subject: Re: [original subject]
 
-Hi {first_name},
-
-Quick follow-up on my previous note. [Add new piece of value - article, case study, insight]
-
-[Reiterate CTA briefly]
-
-Best,
-[Your name]
+Include:
+- A case study showing measurable results (e.g., "saved $X/month" or "Y% employee satisfaction increase")
+- ROI numbers specific to their vertical
+- Reiterate CTA briefly
 
 ### Follow-Up 2 (Day 7)
+Use `follow-up.html` template with video thumbnail + "see it in action" link.
+
 Subject: [Different angle]
 
-Hi {first_name},
-
-[Different approach - perhaps reference industry trend or competitor]
-
-[New value proposition or different CTA]
-
-Best,
-[Your name]
+Include:
+- Video thumbnail image linking to a demo/walkthrough video
+- "See it in action" CTA
+- Different value angle (e.g., competitor comparison, industry trend)
 
 ### Break-Up (Day 14)
+Keep as simple plain text -- stays personal and human.
+
 Subject: Should I close your file?
 
 Hi {first_name},
