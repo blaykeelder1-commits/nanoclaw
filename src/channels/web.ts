@@ -63,7 +63,9 @@ export class WebChannel implements Channel {
       // Serve static widget files
       if (req.method === 'GET' && req.url) {
         const url = new URL(req.url, `http://localhost:${WEB_CHANNEL_PORT}`);
-        const filePath = url.pathname === '/' ? '/index.html' : url.pathname;
+        const urlPath = url.pathname === '/' ? '/index.html' : url.pathname;
+        // Strip /widget/ prefix since widgetDir already points to the widget folder
+        const filePath = urlPath.startsWith('/widget/') ? urlPath.slice(7) : urlPath;
         const fullPath = path.join(widgetDir, filePath);
 
         // Prevent path traversal
