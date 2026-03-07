@@ -218,7 +218,7 @@ export class MessengerChannel implements Channel {
     // Find the recipient PSID to reply to (in-memory first, then DB fallback)
     let recipientId = this.lastSenderByJid.get(jid);
     if (!recipientId) {
-      recipientId = getLastSender(jid) ?? undefined;
+      recipientId = getLastSender(jid)?.replace(/^fb:/, '') ?? undefined;
       if (recipientId) {
         this.lastSenderByJid.set(jid, recipientId);
       }
