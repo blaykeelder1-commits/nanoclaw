@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
@@ -66,13 +67,35 @@ function findChannel(jid: string): Channel | undefined {
   return channels.find((ch) => ch.ownsJid(jid));
 }
 
-/** Route an outbound message to the correct channel. */
+/** Route an outbound message to the correct channel (with dedup). */
+const recentOutbound = new Map<string, number>();
+const DEDUP_WINDOW_MS = 30_000;
+
 async function routeOutbound(jid: string, text: string): Promise<void> {
   const ch = findChannel(jid);
   if (!ch) {
     logger.warn({ jid }, 'No channel found for outbound message');
     return;
   }
+
+  // Dedup: skip if same content was sent to same JID recently
+  const hash = createHash('sha256').update(text).digest('hex').slice(0, 16);
+  const key = `${jid}:${hash}`;
+  const now = Date.now();
+  const lastSent = recentOutbound.get(key);
+  if (lastSent && now - lastSent < DEDUP_WINDOW_MS) {
+    logger.warn({ jid, hash }, 'Duplicate outbound message suppressed');
+    return;
+  }
+  recentOutbound.set(key, now);
+
+  // Prune old entries periodically
+  if (recentOutbound.size > 500) {
+    for (const [k, t] of recentOutbound) {
+      if (now - t > DEDUP_WINDOW_MS) recentOutbound.delete(k);
+    }
+  }
+
   await ch.sendMessage(jid, text);
 }
 
