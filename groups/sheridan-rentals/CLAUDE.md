@@ -70,10 +70,11 @@ When a customer wants to book:
 
 Payment is collected in full upfront via Square when booking. No deposit/balance split.
 
-1. **Full payment at booking**: The entire rental amount is charged upfront via Square online checkout
-2. **How to pay**: Direct them to the booking form on our website (sheridantrailerrentals.us/form/) or send the Square checkout link
+1. **Full payment at booking**: The entire rental amount is charged upfront via the booking form on our website
+2. **How to pay**: ALWAYS direct them to sheridantrailerrentals.us/form/ — this is the ONLY link to send. NEVER send a separate Square checkout link. The website form handles payment, creates the calendar event, and sends confirmation emails automatically.
 3. **Lock code access**: Once payment is confirmed, they get the lock code to access the trailer
 4. **Refundable security deposit**: Equipment-specific security deposits ($250 RV, $50 haulers) are refunded when equipment is returned in good condition — this is handled separately, not through Square
+5. **You do NOT need to create calendar events manually** — the website booking form does this automatically when payment goes through. Just check the calendar to see what's booked.
 
 Key phrases to use:
 - "Once I get your payment squared away, I'll lock in those dates for you"
