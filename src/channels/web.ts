@@ -26,6 +26,10 @@ import {
   OnInboundMessage,
   RegisteredGroup,
 } from '../types.js';
+import {
+  handleSquareCheckout,
+  getAvailabilityBusySlots,
+} from '../square-payments.js';
 
 export interface WebChannelOpts {
   onMessage: OnInboundMessage;
@@ -59,7 +63,66 @@ export class WebChannel implements Channel {
   async connect(): Promise<void> {
     const widgetDir = path.resolve(process.cwd(), 'widget');
 
-    this.server = http.createServer((req, res) => {
+    this.server = http.createServer(async (req, res) => {
+      const corsHeaders: Record<string, string> = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      };
+
+      // Handle CORS preflight
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, corsHeaders);
+        res.end();
+        return;
+      }
+
+      const url = new URL(req.url || '/', `http://localhost:${WEB_CHANNEL_PORT}`);
+
+      // ── POST /api/checkout — Square payment + calendar + emails ──
+      if (req.method === 'POST' && url.pathname === '/api/checkout') {
+        let body = '';
+        req.on('data', (chunk: Buffer) => { body += chunk; });
+        req.on('end', async () => {
+          try {
+            const payload = JSON.parse(body);
+            const result = await handleSquareCheckout(payload);
+            const status = result.success ? 200 : 400;
+            res.writeHead(status, { ...corsHeaders, 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          } catch (err) {
+            logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Checkout endpoint error');
+            res.writeHead(500, { ...corsHeaders, 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Internal server error' }));
+          }
+        });
+        return;
+      }
+
+      // ── POST /api/availability — return busy slots for calendar widget ──
+      if (req.method === 'POST' && url.pathname === '/api/availability') {
+        let body = '';
+        req.on('data', (chunk: Buffer) => { body += chunk; });
+        req.on('end', async () => {
+          try {
+            const { equipment, startDate, endDate } = JSON.parse(body);
+            if (!equipment || !startDate || !endDate) {
+              res.writeHead(400, { ...corsHeaders, 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Missing equipment, startDate, or endDate' }));
+              return;
+            }
+            const busySlots = await getAvailabilityBusySlots(equipment, startDate, endDate);
+            res.writeHead(200, { ...corsHeaders, 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ busySlots }));
+          } catch (err) {
+            logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Availability endpoint error');
+            res.writeHead(500, { ...corsHeaders, 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Internal server error' }));
+          }
+        });
+        return;
+      }
+
       // Serve static widget files
       if (req.method === 'GET' && req.url) {
         const url = new URL(req.url, `http://localhost:${WEB_CHANNEL_PORT}`);
