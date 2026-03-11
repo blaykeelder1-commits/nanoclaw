@@ -30,6 +30,7 @@ import {
   handleSquareCheckout,
   getAvailabilityBusySlots,
   handleSquareWebhook,
+  getBookingById,
 } from '../square-payments.js';
 
 export interface WebChannelOpts {
@@ -142,6 +143,20 @@ export class WebChannel implements Channel {
             res.end(JSON.stringify({ received: false }));
           }
         });
+        return;
+      }
+
+      // ── GET /api/booking/:id — confirmation page polling ──
+      if (req.method === 'GET' && url.pathname.startsWith('/api/booking/')) {
+        const bookingId = decodeURIComponent(url.pathname.slice('/api/booking/'.length));
+        const booking = getBookingById(bookingId);
+        if (booking) {
+          res.writeHead(200, { ...corsHeaders, 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(booking));
+        } else {
+          res.writeHead(404, { ...corsHeaders, 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Booking not found' }));
+        }
         return;
       }
 

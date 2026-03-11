@@ -259,12 +259,17 @@ After ANY booking or qualified lead, immediately email:
 - **Subject**: Clear description of what happened
 - **Body**: All relevant details
 
-### Daily Digest
+### Daily Digest (Email Only)
 
-You have a daily scheduled task. When it fires:
-1. Check Google Calendar for tomorrow's events and the next 7 days
-2. Email snakgroupteam@snakgroup.biz with subject "Daily Update - [Date]"
-3. Include: upcoming appointments, scheduled pickups/returns, any pending inquiries
+You have a daily scheduled task at 8 AM CT that sends an email digest to snakgroupteam@snakgroup.biz. This covers Sheridan Rentals bookings, new inquiries, and Snak Group client conversations. Do NOT send digests to WhatsApp — WhatsApp is for interactive conversation only. If the owner asks for a digest or report on WhatsApp, generate it on demand.
+
+### Sheridan Bookings Dashboard
+
+All Sheridan Rentals bookings are synced to a Google Sheet that serves as the live booking dashboard. After confirming any booking, run the sync tool to keep it updated:
+```bash
+npx tsx /workspace/project/tools/bookings/sync-to-sheet.ts --spreadsheet-id "$SHERIDAN_SPREADSHEET_ID"
+```
+The sheet link is included in every daily digest email.
 
 ---
 

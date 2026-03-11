@@ -22,6 +22,7 @@ WatchdogSec=120
 # Environment
 Environment=NODE_ENV=production
 Environment=LOG_LEVEL=info
+Environment=TZ=America/Chicago
 
 # Resource limits
 MemoryMax=2G

@@ -278,6 +278,23 @@ export class GmailChannel implements Channel {
               for (const e of entries.slice(-2500)) processedUids.add(e);
             }
 
+            // Skip automated/noreply senders to avoid burning credits on notifications
+            const lowerSender = senderEmail.toLowerCase();
+            const IGNORE_PATTERNS = [
+              'noreply@', 'no-reply@', 'donotreply@', 'do-not-reply@',
+              'notify@', 'notification@', 'notifications@', 'alert@', 'alerts@',
+              'mailer-daemon@', 'postmaster@',
+              '@notify.', '@noreply.', '@messaging.',
+              'drive-shares-dm-noreply@', 'calendar-notification@',
+              '@google.com', '@cloudflare.com', '@squareup.com',
+              '@github.com', '@linkedin.com', '@facebookmail.com',
+            ];
+            if (IGNORE_PATTERNS.some(p => lowerSender.includes(p))) {
+              logger.debug({ from: senderEmail, subject }, 'Ignoring automated email');
+              processedUids.add(uid);
+              continue;
+            }
+
             logger.info(
               { from: senderEmail, subject, uid, messageId },
               'Gmail inbound email',

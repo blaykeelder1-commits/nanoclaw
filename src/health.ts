@@ -14,6 +14,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
+import { expirePendingBookings } from './square-payments.js';
 import {
   getDailySpendUsd,
   getDueTasks,
@@ -83,7 +84,10 @@ function checkAuthState(): boolean {
 }
 
 function isActiveHours(): boolean {
-  const hour = new Date().getHours();
+  const hour = parseInt(
+    new Intl.DateTimeFormat('en-US', { timeZone: TIMEZONE, hour: '2-digit', hour12: false }).format(new Date()),
+    10,
+  );
   return hour >= 9 && hour <= 18; // Business hours only — reduces false "no messages" warnings
 }
 
@@ -312,6 +316,13 @@ export function startHealthMonitor(deps: HealthMonitorDeps): void {
       }
     } catch (err) {
       logger.error({ err }, 'Failed to prune logs');
+    }
+
+    // Expire stale pending bookings (>30 min old)
+    try {
+      expirePendingBookings();
+    } catch (err) {
+      logger.error({ err }, 'Failed to expire pending bookings');
     }
 
     // Clean up container log files older than 7 days

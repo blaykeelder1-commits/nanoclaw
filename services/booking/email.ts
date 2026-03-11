@@ -30,7 +30,7 @@ function getTransporter(): Transporter {
   return transporter;
 }
 
-const OWNER_EMAIL = 'snakgroupteam@snakgroup.biz';
+const OWNER_EMAIL = 'info@sheridantrailerrentals.us';
 const FROM_NAME = 'Sheridan Rentals';
 
 function getFrom(): string {

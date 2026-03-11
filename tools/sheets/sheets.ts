@@ -22,6 +22,7 @@ interface Args {
   range?: string;
   values?: string[][];
   valueInput?: string;
+  spreadsheetId?: string;
 }
 
 function parseArgs(): Args {
@@ -67,12 +68,13 @@ function parseArgs(): Args {
     range: flags.range,
     values,
     valueInput: flags['value-input'] || 'USER_ENTERED',
+    spreadsheetId: flags['spreadsheet-id'],
   };
 }
 
-function getAuth(): { auth: InstanceType<typeof google.auth.JWT>; spreadsheetId: string } {
+function getAuth(spreadsheetIdOverride?: string): { auth: InstanceType<typeof google.auth.JWT>; spreadsheetId: string } {
   const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-  const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
+  const spreadsheetId = spreadsheetIdOverride || process.env.GOOGLE_SPREADSHEET_ID;
 
   if (!keyJson) {
     console.error(JSON.stringify({
@@ -84,7 +86,7 @@ function getAuth(): { auth: InstanceType<typeof google.auth.JWT>; spreadsheetId:
   if (!spreadsheetId) {
     console.error(JSON.stringify({
       status: 'error',
-      error: 'Missing GOOGLE_SPREADSHEET_ID environment variable.',
+      error: 'Missing GOOGLE_SPREADSHEET_ID environment variable (or pass --spreadsheet-id flag).',
     }));
     process.exit(1);
   }
@@ -192,7 +194,7 @@ async function getInfo(sheets: sheets_v4.Sheets, spreadsheetId: string) {
 
 async function main() {
   const args = parseArgs();
-  const { auth, spreadsheetId } = getAuth();
+  const { auth, spreadsheetId } = getAuth(args.spreadsheetId);
   const sheets = getSheets(auth);
 
   try {

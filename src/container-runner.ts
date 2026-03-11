@@ -243,6 +243,7 @@ const SECRETS_SQUARE = [
   'SQUARE_ACCESS_TOKEN',
   'SQUARE_LOCATION_ID',
   'SQUARE_ENVIRONMENT',
+  'SHERIDAN_SPREADSHEET_ID',
 ] as const;
 
 // Social media posting (X, Facebook, LinkedIn)
@@ -264,9 +265,10 @@ const SECRETS_IDDI = [
   'IDDI_PASSWORD',
 ] as const;
 
-// Lead generation
+// Lead generation & cold outreach
 const SECRETS_LEADS = [
   'GOOGLE_MAPS_API_KEY',
+  'INSTANTLY_API_KEY',
 ] as const;
 
 // All secret keys (main group gets everything)

@@ -55,7 +55,7 @@ const SECRETS_IDDI = [
   'IDDI_EMAIL',
   'IDDI_PASSWORD',
 ] as const;
-const SECRETS_LEADS = ['GOOGLE_MAPS_API_KEY'] as const;
+const SECRETS_LEADS = ['GOOGLE_MAPS_API_KEY', 'INSTANTLY_API_KEY'] as const;
 
 const ALL_SECRET_KEYS = [
   ...SECRETS_CORE,

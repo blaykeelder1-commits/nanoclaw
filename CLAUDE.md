@@ -32,6 +32,7 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `tools/inventory/reconcile.ts` | Unified reconciliation CLI (IDDI + Sheets → reorder/blacklist decisions) |
 | `container/skills/gmail/` | Gmail read/search/send/reply via API |
 | `container/skills/google-drive/` | Google Drive file access |
+| `container/skills/instantly/` | Instantly.ai cold email campaigns (push leads, sync replies, analytics) |
 | `container/skills/lead-finder/` | Lead generation (Maps, scraping, scoring) |
 | `container/skills/viral-content/` | Viral content engine (trend scraping, pattern learning, remixing) |
 | `tools/email/send-email.ts` | SMTP email sender (supports HTML templates, attachments, inline images) |
@@ -43,6 +44,7 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `tools/social/trend-scraper.ts` | Trend monitoring and viral pattern analysis |
 | `groups/main/assets/` | Product photos, PDFs, video thumbnails for email campaigns |
 | `groups/main/viral-patterns.md` | Evolving viral content patterns knowledge file |
+| `tools/instantly/instantly.ts` | Instantly.ai API (campaigns, leads, replies, warmup) |
 | `tools/crm/import-apollo.ts` | Apollo.io CSV lead importer |
 | `tools/crm/query-contacts.ts` | CRM contact query utility |
 | `tools/crm/lead-score.ts` | Lead scoring engine (0-100) |

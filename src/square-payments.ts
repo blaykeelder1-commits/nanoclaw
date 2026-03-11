@@ -7,7 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import nodemailer from 'nodemailer';
 import Database from 'better-sqlite3';
-import { google, calendar_v3 } from 'googleapis';
+import { google, calendar_v3, sheets_v4 } from 'googleapis';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 
@@ -34,8 +34,10 @@ const BASE_URL =
 const smtpConfig = readEnvFile(['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM']);
 const BUSINESS_EMAIL = 'blayke.elder1@gmail.com';
 
-// ── Google Calendar config ──────────────────────────────────────
-const gcalConfig = readEnvFile(['GOOGLE_SERVICE_ACCOUNT_KEY']);
+// ── Google Calendar + Sheets config ─────────────────────────────
+const gcalConfig = readEnvFile(['GOOGLE_SERVICE_ACCOUNT_KEY', 'SHERIDAN_SPREADSHEET_ID']);
+const SHERIDAN_SPREADSHEET_ID =
+  process.env.SHERIDAN_SPREADSHEET_ID || gcalConfig.SHERIDAN_SPREADSHEET_ID || '';
 
 const CALENDAR_IDS: Record<string, string> = {
   rv: 'c_7ba6d46497500abce720f92671ef92bb8bbdd79e741f71d41c01084e6bb0d69c@group.calendar.google.com',
@@ -191,7 +193,10 @@ function getCalAuth(): InstanceType<typeof google.auth.JWT> | null {
     return new google.auth.JWT({
       email: key.client_email,
       key: key.private_key,
-      scopes: ['https://www.googleapis.com/auth/calendar'],
+      scopes: [
+        'https://www.googleapis.com/auth/calendar',
+        'https://www.googleapis.com/auth/spreadsheets',
+      ],
     });
   } catch {
     logger.error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY');
@@ -205,6 +210,102 @@ function getCal(): calendar_v3.Calendar | null {
   if (!auth) return null;
   calClient = google.calendar({ version: 'v3', auth });
   return calClient;
+}
+
+// ── Google Sheets sync ──────────────────────────────────────────
+let sheetsClient: sheets_v4.Sheets | null = null;
+
+function getSheets(): sheets_v4.Sheets | null {
+  if (sheetsClient) return sheetsClient;
+  const auth = getCalAuth();
+  if (!auth) return null;
+  sheetsClient = google.sheets({ version: 'v4', auth });
+  return sheetsClient;
+}
+
+/** Sync all bookings to the Google Sheet dashboard. */
+export async function syncBookingsToSheet(): Promise<void> {
+  if (!SHERIDAN_SPREADSHEET_ID) return;
+
+  const sheets = getSheets();
+  if (!sheets) {
+    logger.warn('Google Sheets auth not configured — skipping sync');
+    return;
+  }
+
+  const d = getDb();
+  const rows = d.prepare(
+    `SELECT id, equipment_label, customer_first, customer_last, customer_phone, customer_email, dates, num_days, subtotal, deposit, balance, status, created_at FROM bookings ORDER BY created_at DESC`,
+  ).all() as Array<{
+    id: string; equipment_label: string; customer_first: string; customer_last: string;
+    customer_phone: string; customer_email: string; dates: string; num_days: number;
+    subtotal: number; deposit: number; balance: number; status: string; created_at: string;
+  }>;
+
+  // Sort by pickup date (first date in dates array)
+  rows.sort((a, b) => {
+    try {
+      const aDate = JSON.parse(a.dates)[0] || '';
+      const bDate = JSON.parse(b.dates)[0] || '';
+      return aDate.localeCompare(bDate);
+    } catch { return 0; }
+  });
+
+  const header = ['Booking ID', 'Equipment', 'Customer', 'Phone', 'Email', 'Pickup', 'Return', 'Days', 'Total', 'Deposit', 'Balance', 'Status', 'Created'];
+
+  const dataRows = rows.map((r) => {
+    let pickup = '';
+    let returnDate = '';
+    try {
+      const dates: string[] = JSON.parse(r.dates);
+      if (dates.length > 0) pickup = formatDateNice(dates[0]);
+      if (dates.length > 1) returnDate = formatDateNice(dates[dates.length - 1]);
+      else returnDate = pickup;
+    } catch {}
+
+    return [
+      r.id,
+      r.equipment_label,
+      `${r.customer_first} ${r.customer_last}`.trim(),
+      r.customer_phone,
+      r.customer_email,
+      pickup,
+      returnDate,
+      String(r.num_days),
+      `$${r.subtotal.toFixed(2)}`,
+      `$${r.deposit.toFixed(2)}`,
+      `$${r.balance.toFixed(2)}`,
+      r.status.charAt(0).toUpperCase() + r.status.slice(1),
+      formatDateNice(r.created_at),
+    ];
+  });
+
+  const values = [header, ...dataRows];
+
+  try {
+    // Clear and rewrite the sheet
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId: SHERIDAN_SPREADSHEET_ID,
+      range: 'Bookings!A:M',
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHERIDAN_SPREADSHEET_ID,
+      range: 'Bookings!A1',
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values },
+    });
+    logger.info({ rows: dataRows.length }, 'Bookings synced to Google Sheet');
+  } catch (err) {
+    logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Failed to sync bookings to sheet');
+  }
+}
+
+function formatDateNice(dateStr: string): string {
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch { return dateStr; }
 }
 
 async function checkCalendarAvailability(equipmentKey: string, dates: string[]): Promise<boolean> {
@@ -395,6 +496,43 @@ async function sendConfirmationEmails(
   });
 }
 
+/** Expire pending bookings older than 30 minutes to free up availability */
+export function expirePendingBookings(): number {
+  const d = getDb();
+  const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const result = d.prepare(
+    `UPDATE bookings SET status = 'expired' WHERE status = 'pending' AND created_at < ?`,
+  ).run(cutoff);
+  if (result.changes > 0) {
+    logger.info({ expired: result.changes }, 'Expired stale pending bookings');
+  }
+  return result.changes;
+}
+
+/** Look up a booking by ID (for confirmation page polling) */
+export function getBookingById(id: string): Record<string, unknown> | null {
+  const d = getDb();
+  const row = d.prepare('SELECT * FROM bookings WHERE id = ? LIMIT 1').get(id) as Record<string, any> | undefined;
+  if (!row) return null;
+  const eq = EQUIPMENT_CONFIG[row.equipment];
+  const datesArr: string[] = JSON.parse(row.dates || '[]');
+  const dateRange = datesArr.length <= 1
+    ? (datesArr[0] || 'TBD')
+    : datesArr[0] + ' to ' + datesArr[datesArr.length - 1];
+  return {
+    id: row.id,
+    status: row.status,
+    equipment: row.equipment,
+    equipmentLabel: row.equipment_label || eq?.label || row.equipment,
+    unit: eq?.unit || 'day',
+    dateRange,
+    numDays: row.num_days,
+    subtotal: row.subtotal || 0,
+    deposit: row.deposit || 0,
+    total: (row.subtotal || 0) + (row.deposit || 0),
+  };
+}
+
 // ── Types ───────────────────────────────────────────────────────
 export interface CheckoutRequest {
   equipment: string;
@@ -561,7 +699,7 @@ export async function handleSquareCheckout(
         },
         payment_note: `Booking ${bookingId}: ${eq?.label} rental (${dateNote}) for ${name}`,
         checkout_options: {
-          redirect_url: `https://sheridantrailerrentals.us/form/?confirmed=${bookingId}`,
+          redirect_url: `https://sheridantrailerrentals.us/form/?booking=${bookingId}`,
         },
       }),
     });
@@ -606,7 +744,11 @@ export async function handleSquareCheckout(
 // creates Google Calendar event, sends emails. Zero credits burned.
 export async function handleSquareWebhook(body: string, signature: string): Promise<boolean> {
   const webhookSigKey = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY || '';
-  if (webhookSigKey && signature) {
+  if (webhookSigKey) {
+    if (!signature) {
+      logger.warn('Square webhook: missing signature header, rejecting');
+      return false;
+    }
     const hmac = crypto.createHmac('sha256', webhookSigKey);
     hmac.update(body);
     const expected = hmac.digest('base64');
@@ -614,6 +756,8 @@ export async function handleSquareWebhook(body: string, signature: string): Prom
       logger.warn('Square webhook signature mismatch');
       return false;
     }
+  } else {
+    logger.warn('SQUARE_WEBHOOK_SIGNATURE_KEY not set — webhook signature validation disabled');
   }
 
   let event: { type?: string; data?: { object?: { payment?: { id: string; order_id: string; receipt_url: string; status?: string; note?: string; buyer_email_address?: string; amount_money?: { amount: number } } } } };
@@ -692,6 +836,7 @@ async function confirmBookingFromDb(
   logger.info({ bookingId: booking.id, paymentId }, 'Booking confirmed via webhook (DB path)');
 
   createCalendarAndEmail(booking.equipment, datesArr, customer, booking.deposit, paymentId, receiptUrl, booking.id);
+  syncBookingsToSheet().catch((err) => logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Sheet sync failed'));
   return true;
 }
 
@@ -836,6 +981,7 @@ async function confirmBookingFromSquare(
 
     const customer = { firstName, lastName, email: customerEmail, phone: customerPhone };
     createCalendarAndEmail(equipmentKey, datesArr, customer, depositDollars, paymentId, receiptUrl, bookingId);
+    syncBookingsToSheet().catch((err) => logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Sheet sync failed'));
     return true;
   } catch (err) {
     logger.error({ error: err instanceof Error ? err.message : String(err), orderId }, 'Failed to process Square order');
