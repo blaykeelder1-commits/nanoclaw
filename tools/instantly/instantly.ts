@@ -102,7 +102,19 @@ async function getCampaignAnalytics(id?: string): Promise<void> {
 }
 
 async function createCampaign(name: string): Promise<void> {
-  const data = await api('POST', '/campaigns', { name });
+  const data = await api('POST', '/campaigns', {
+    name,
+    campaign_schedule: {
+      schedules: [
+        {
+          name: 'Weekdays',
+          days: { 1: true, 2: true, 3: true, 4: true, 5: true, 6: false, 0: false },
+          timezone: 'America/Chicago',
+          timing: { from: '09:00', to: '17:00' },
+        },
+      ],
+    },
+  });
   console.log(JSON.stringify({ status: 'success', campaign: data }));
 }
 
@@ -217,7 +229,7 @@ async function addLeads(opts: {
       if (opts.listId) body.list_id = opts.listId;
 
       const result = await api<{ uploaded: number; skipped?: number; errors?: unknown[] }>(
-        'POST', '/leads/bulk', body,
+        'POST', '/leads/add', body,
       );
       totalPushed += result.uploaded || batch.length;
       totalSkipped += result.skipped || 0;

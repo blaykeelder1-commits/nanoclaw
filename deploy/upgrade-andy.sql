@@ -283,6 +283,54 @@ Only report to owner if there are actionable issues. Work silently if everything
   datetime('now')
 );
 
+-- Stage 5e: Daily Facebook Page Posting — Sheridan Rentals (weekdays 9 AM CT)
+-- Organic content to build page credibility and followers before Marketplace access
+
+INSERT OR REPLACE INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
+VALUES (
+  'sheridan-fb-post-daily',
+  'sheridan-rentals',
+  '__scheduled__',
+  'Post today''s Facebook content to the Sheridan Rentals page. Follow this exact process:
+
+STEP 1 — READ BRAND GUIDELINES
+Read brand-voice.md for tone, key phrases, differentiators, and hashtag rules.
+
+STEP 2 — CHECK CONTENT CALENDAR
+Read content-calendar.md. Check today''s day-of-week theme:
+- Monday: Fleet Spotlight — showcase one piece of equipment with pricing
+- Tuesday: Local Flavor / Tips — camping spots near Houston, hauling tips, Tomball events
+- Wednesday: Customer Use Case — real scenarios (project car pickup, family RV trip, moving day)
+- Thursday: Seasonal / Promotional — tie into current season, availability alerts
+- Friday: Engagement / Fun — polls, questions, weekend plans
+
+Review the Log section to avoid repeating recent topics (never repeat within 2 weeks).
+
+STEP 3 — CRAFT THE POST
+Write a post following today''s theme. Rules:
+- Under 300 characters
+- 2-3 hashtags (mix branded + local/seasonal from brand-voice.md)
+- Include booking link (sheridantrailerrentals.us/form/) on fleet spotlight and promo posts
+- Casual Texas friendly tone — like talking to a neighbor
+- No corporate speak, no fluff
+
+STEP 4 — POST TO FACEBOOK
+Use post-facebook.ts to publish:
+  npx tsx tools/social/post-facebook.ts --message "your post content"
+Add --link for booking link posts. Add --image if you have a relevant image URL.
+
+STEP 5 — UPDATE CONTENT CALENDAR
+Add a row to the Log table in content-calendar.md with today''s date, day theme, topic summary, and status (posted).
+
+Work silently. Do NOT send a progress report.',
+  'cron',
+  '0 9 * * 1-5',
+  'group',
+  datetime('now'),
+  'active',
+  datetime('now')
+);
+
 -- Stage 6: Per-task model/budget overrides
 -- Upgrade daily briefings to Sonnet — they need complex multi-tool reasoning
 UPDATE scheduled_tasks SET model = 'claude-sonnet-4-6', budget_usd = 0.50

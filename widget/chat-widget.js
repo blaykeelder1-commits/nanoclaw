@@ -301,6 +301,7 @@
       loadSocketIO(function() {
         var connectOpts = {
           transports: ['websocket', 'polling'],
+          query: { business: 'sheridan' },
           auth: {}
         };
 
@@ -334,7 +335,7 @@
             typingTimeout = null;
           }
 
-          addMessage('bot', data.content, {
+          addMessage('bot', data.text || data.content, {
             buttons: data.buttons,
             paymentLink: data.paymentLink,
             paymentLabel: data.paymentLabel,

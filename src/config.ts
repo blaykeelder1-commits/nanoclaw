@@ -123,7 +123,7 @@ export const WEB_CHANNEL_PORT = parseInt(
 );
 export const WEB_CHANNEL_ORIGINS = (
   process.env.WEB_CHANNEL_ORIGINS ||
-  'https://snakgroup.biz,https://www.snakgroup.biz'
+  'https://snakgroup.biz,https://www.snakgroup.biz,https://sheridantrailerrentals.us,https://www.sheridantrailerrentals.us'
 )
   .split(',')
   .map((s) => s.trim())
