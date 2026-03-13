@@ -302,6 +302,7 @@ export function initDatabase(): void {
 
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  db.pragma('busy_timeout = 5000'); // Wait up to 5s on lock instead of failing immediately
   createSchema(db);
 
   // Migrate from JSON files if they exist
@@ -1235,20 +1236,42 @@ const DEFAULT_PRICING: [number, number, number] = [3.00, 15.00, 0.30]; // Sonnet
  * Calculates "today" using the configured TIMEZONE, not UTC.
  */
 export function getDailySpendUsd(): number {
-  // Calculate midnight in the configured timezone, then convert to UTC for SQL
+  // Calculate midnight in the configured timezone, then convert to UTC for SQL.
+  // We get today's date in the target timezone, then find midnight of that date
+  // in UTC by constructing an ISO string and parsing it with timezone offset.
   const now = new Date();
-  // Get current time in the target timezone as components
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: TIMEZONE,
     year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
     hour12: false,
   }).formatToParts(now);
   const get = (t: string) => parts.find(p => p.type === t)?.value || '0';
-  // Hours/minutes/seconds elapsed since midnight in target timezone
-  const elapsedMs = (parseInt(get('hour'), 10) * 3600 + parseInt(get('minute'), 10) * 60 + parseInt(get('second'), 10)) * 1000;
-  // Subtract elapsed time from current UTC time to get midnight UTC equivalent
-  const todayStartUtc = new Date(now.getTime() - elapsedMs).toISOString();
+  // Get today's date in the target timezone (e.g. "2026-03-12")
+  const todayLocal = `${get('year')}-${get('month')}-${get('day')}`;
+  // Find the UTC timestamp of midnight in the target timezone by creating a date
+  // at midnight local time and checking the offset. We do this by finding two
+  // probe points and using the one that lands on the correct local date.
+  const midnightGuess = new Date(`${todayLocal}T00:00:00Z`);
+  // Adjust: find how many ms the timezone is offset from UTC on this date
+  const localAtGuess = new Intl.DateTimeFormat('en-US', {
+    timeZone: TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(midnightGuess);
+  const guessGet = (t: string) => localAtGuess.find(p => p.type === t)?.value || '0';
+  const guessDate = `${guessGet('year')}-${guessGet('month')}-${guessGet('day')}`;
+  const guessHour = parseInt(guessGet('hour'), 10);
+  const guessMinute = parseInt(guessGet('minute'), 10);
+  // If guessDate matches todayLocal, the offset from midnight is guessHour:guessMinute
+  // If not, we need to adjust by +/- 24h
+  let offsetMs: number;
+  if (guessDate === todayLocal) {
+    offsetMs = (guessHour * 60 + guessMinute) * 60000;
+  } else if (guessDate < todayLocal) {
+    offsetMs = -((24 - guessHour) * 60 - guessMinute) * 60000;
+  } else {
+    offsetMs = ((24 + guessHour) * 60 + guessMinute) * 60000;
+  }
+  const todayStartUtc = new Date(midnightGuess.getTime() - offsetMs).toISOString();
 
   const rows = db
     .prepare(

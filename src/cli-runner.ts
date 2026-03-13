@@ -472,15 +472,26 @@ export async function runCliAgent(
           result: resultText,
         });
       } catch (err) {
-        // If JSON parsing fails, use raw stdout as result
-        logger.warn(
-          { group: input.groupFolder, error: err },
-          'Failed to parse CLI JSON output, using raw stdout',
-        );
-        resolve({
-          status: 'success',
-          result: stdout.trim() || null,
-        });
+        // JSON parsing failed — likely a crash or partial output
+        const raw = stdout.trim();
+        if (raw) {
+          logger.warn(
+            { group: input.groupFolder, error: err },
+            'Failed to parse CLI JSON output, using raw stdout',
+          );
+          resolve({ status: 'success', result: raw });
+        } else {
+          // Empty stdout + unparseable = the CLI crashed or produced nothing
+          logger.error(
+            { group: input.groupFolder, error: err, stderrTail: stderr.slice(-200) },
+            'CLI produced no parseable output — treating as error',
+          );
+          resolve({
+            status: 'error',
+            result: null,
+            error: `CLI produced no output: ${stderr.slice(-200) || 'unknown error'}`,
+          });
+        }
       }
     });
 

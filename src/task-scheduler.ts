@@ -10,6 +10,7 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
+  MAX_DAILY_SPEND_USD,
   MODEL_SCHEDULED,
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
@@ -23,6 +24,7 @@ import {
 } from './container-runner.js';
 import {
   getAllTasks,
+  getDailySpendUsd,
   getDueTasks,
   getTaskById,
   logTaskRun,
@@ -242,6 +244,19 @@ async function runTaskViaContainer(
   startTime: number,
   onResult: (result: string | null, error: string | null) => void,
 ): Promise<void> {
+  // Enforce daily spend cap before spawning container (prevents scheduled tasks from bypassing the cap)
+  if (MAX_DAILY_SPEND_USD > 0) {
+    const todaySpend = getDailySpendUsd();
+    if (todaySpend >= MAX_DAILY_SPEND_USD) {
+      logger.warn(
+        { taskId: task.id, todaySpend: todaySpend.toFixed(2), cap: MAX_DAILY_SPEND_USD },
+        'Daily spend cap reached — skipping scheduled container task',
+      );
+      onResult(null, `Daily spend cap reached ($${todaySpend.toFixed(2)} / $${MAX_DAILY_SPEND_USD})`);
+      return;
+    }
+  }
+
   let result: string | null = null;
   let error: string | null = null;
 
@@ -361,10 +376,13 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
               updateTask(currentTask.id, { next_run: nextRun });
               continue;
             } catch {
+              // Invalid cron expression — pause the task to stop infinite retries
               logger.error(
-                { taskId: currentTask.id },
-                'Failed to parse cron for stale task',
+                { taskId: currentTask.id, cron: currentTask.schedule_value },
+                'Failed to parse cron for stale task — pausing to prevent infinite retry loop',
               );
+              updateTask(currentTask.id, { status: 'paused' });
+              continue;
             }
           }
         }
@@ -378,7 +396,14 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
               { tz: TIMEZONE },
             ).next().toISOString();
             updateTask(currentTask.id, { next_run: preAdvanceNextRun });
-          } catch { /* runTask will handle the error */ }
+          } catch {
+            logger.error(
+              { taskId: currentTask.id, cron: currentTask.schedule_value },
+              'Failed to parse cron for pre-advance — pausing task',
+            );
+            updateTask(currentTask.id, { status: 'paused' });
+            continue;
+          }
         } else if (currentTask.schedule_type === 'once') {
           // Mark once-tasks as paused immediately to prevent double-fire
           updateTask(currentTask.id, { status: 'paused' });
