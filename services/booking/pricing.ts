@@ -1,4 +1,4 @@
-import type { EquipmentKey, EquipmentConfig, AddOn, LineItem, PriceBreakdown } from './types.js';
+import type { EquipmentKey, EquipmentConfig, AddOn, LineItem, PaymentMode, PriceBreakdown } from './types.js';
 
 // ── Equipment Configuration ─────────────────────────────────────────
 // Source of truth: groups/sheridan-rentals/pricing.md + inventory.md
@@ -34,7 +34,7 @@ export const ADD_ONS: Record<string, AddOn> = {
   generator: {
     key: 'generator',
     label: 'Generator',
-    rate: 100,
+    rate: 75,
     unit: 'night',
     appliesTo: ['rv'],
   },
@@ -47,12 +47,27 @@ export const ADD_ONS: Record<string, AddOn> = {
   },
 };
 
+// ── Same-Week Detection ─────────────────────────────────────────────
+
+/** Returns true if the earliest rental date is within 7 days of today. */
+function isSameWeekBooking(dates: string[]): boolean {
+  if (dates.length === 0) return false;
+  const sorted = [...dates].sort();
+  const earliest = new Date(sorted[0] + 'T00:00:00');
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diffMs = earliest.getTime() - today.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  return diffDays <= 7;
+}
+
 // ── Price Calculation ───────────────────────────────────────────────
 
 export function calculatePrice(
   equipmentKey: EquipmentKey,
   numDays: number,
   addOnKeys: string[] = [],
+  opts?: { dates?: string[]; paymentMode?: PaymentMode },
 ): PriceBreakdown {
   const equipment = EQUIPMENT[equipmentKey];
   if (!equipment) throw new Error(`Unknown equipment: ${equipmentKey}`);
@@ -96,7 +111,24 @@ export function calculatePrice(
 
   const subtotal = lineItems.reduce((sum, item) => sum + item.total, 0);
   const deposit = equipment.deposit;
-  const balance = Math.max(0, subtotal - deposit);
+
+  // RV Camper payment mode: same-week = full payment required, otherwise deposit-only allowed
+  // Car Hauler / Landscaping Trailer: always full payment
+  let paymentMode: PaymentMode;
+  if (opts?.paymentMode === 'full') {
+    // Customer chose to pay in full — always respect
+    paymentMode = 'full';
+  } else if (equipmentKey === 'rv' && opts?.dates && !isSameWeekBooking(opts.dates)) {
+    // RV booked >1 week out: deposit only (customer can also choose full)
+    paymentMode = opts?.paymentMode || 'deposit';
+  } else {
+    // Same-week RV or non-RV: full payment
+    paymentMode = 'full';
+  }
+
+  const totalWithDeposit = subtotal + deposit;
+  const chargeNow = paymentMode === 'deposit' ? deposit : totalWithDeposit;
+  const balance = paymentMode === 'deposit' ? subtotal : 0;
 
   return {
     equipment,
@@ -106,6 +138,8 @@ export function calculatePrice(
     deposit,
     balance,
     addOns: validAddOns,
+    paymentMode,
+    chargeNow,
   };
 }
 
@@ -116,8 +150,20 @@ export function buildSquareLineItems(pricing: PriceBreakdown): Array<{
   quantity: string;
   base_price_money: { amount: number; currency: string };
 }> {
-  // Send all line items to Square — full amount charged upfront
-  return pricing.lineItems.map((item) => ({
+  if (pricing.paymentMode === 'deposit') {
+    // Deposit-only checkout: single line item for the security deposit
+    return [{
+      name: `${pricing.equipment.label} — Refundable Security Deposit (balance of $${pricing.subtotal.toFixed(2)} due before rental)`,
+      quantity: '1',
+      base_price_money: {
+        amount: Math.round(pricing.deposit * 100),
+        currency: 'USD',
+      },
+    }];
+  }
+
+  // Full payment: all line items + deposit
+  const items = pricing.lineItems.map((item) => ({
     name: item.name,
     quantity: item.quantity.toString(),
     base_price_money: {
@@ -125,4 +171,16 @@ export function buildSquareLineItems(pricing: PriceBreakdown): Array<{
       currency: 'USD',
     },
   }));
+
+  // Add deposit as a separate line item
+  items.push({
+    name: 'Refundable Security Deposit',
+    quantity: '1',
+    base_price_money: {
+      amount: Math.round(pricing.deposit * 100),
+      currency: 'USD',
+    },
+  });
+
+  return items;
 }

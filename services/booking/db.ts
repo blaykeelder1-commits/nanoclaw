@@ -169,6 +169,18 @@ export function getActiveBookings(): Booking[] {
   return rows.map(rowToBooking);
 }
 
+// ── Pending Booking Cleanup ─────────────────────────────────────────
+
+/** Expire pending bookings older than the given minutes (default 30min). */
+export function expireStalePendingBookings(maxAgeMinutes = 30): number {
+  const cutoff = new Date(Date.now() - maxAgeMinutes * 60 * 1000).toISOString();
+  const result = db.prepare(`
+    UPDATE bookings SET status = 'cancelled', updated_at = ?
+    WHERE status = 'pending' AND created_at < ?
+  `).run(new Date().toISOString(), cutoff);
+  return result.changes;
+}
+
 // ── Double-Booking Prevention ───────────────────────────────────────
 
 export function hasOverlappingBooking(equipment: EquipmentKey, dates: string[]): boolean {

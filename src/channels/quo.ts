@@ -67,6 +67,38 @@ function verifyWebhookSignature(
   }
 }
 
+// ── SMS Message Splitting ──────────────────────────────────────────
+const SMS_MAX_LENGTH = 600;
+
+/** Split long text into SMS-friendly segments at sentence boundaries. */
+function splitSmsMessage(text: string): string[] {
+  if (text.length <= SMS_MAX_LENGTH) return [text];
+
+  const segments: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > SMS_MAX_LENGTH) {
+    // Find the last sentence boundary within the limit
+    let splitAt = -1;
+    for (const sep of ['. ', '! ', '? ', '\n']) {
+      const idx = remaining.lastIndexOf(sep, SMS_MAX_LENGTH);
+      if (idx > 0 && idx > splitAt) splitAt = idx + sep.length;
+    }
+    // Fallback: split at last space
+    if (splitAt <= 0) {
+      splitAt = remaining.lastIndexOf(' ', SMS_MAX_LENGTH);
+    }
+    // Last resort: hard split
+    if (splitAt <= 0) splitAt = SMS_MAX_LENGTH;
+
+    segments.push(remaining.slice(0, splitAt).trim());
+    remaining = remaining.slice(splitAt).trim();
+  }
+
+  if (remaining) segments.push(remaining);
+  return segments;
+}
+
 // ── Zod Webhook Payload Schema ─────────────────────────────────────
 const WebhookMessageSchema = z.object({
   id: z.string(),
@@ -204,41 +236,49 @@ export class QuoChannel implements Channel {
       return;
     }
 
-    // Prefix with assistant name for consistency
-    const prefixed = `${ASSISTANT_NAME}: ${text}`;
-
     if (this.apiBreaker.state === 'open') {
       logger.error({ jid, breaker: 'openphone-api' }, 'Quo API circuit breaker open, dropping message');
       return;
     }
 
-    try {
-      await this.apiBreaker.call(async () => {
-        const response = await fetch(`${QUO_API_BASE}/messages`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: QUO_API_KEY,
-          },
-          body: JSON.stringify({
-            content: prefixed,
-            from: line.phoneId,
-            to: [customerNumber],
-          }),
+    // Split long messages at sentence boundaries for better SMS UX
+    const segments = splitSmsMessage(`${ASSISTANT_NAME}: ${text}`);
+
+    for (const segment of segments) {
+      try {
+        await this.apiBreaker.call(async () => {
+          const response = await fetch(`${QUO_API_BASE}/messages`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: QUO_API_KEY,
+            },
+            body: JSON.stringify({
+              content: segment,
+              from: line.phoneId,
+              to: [customerNumber],
+            }),
+          });
+
+          if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`Quo send failed ${response.status}: ${body}`);
+          }
+
+          logger.info(
+            { jid, to: customerNumber, length: segment.length, segments: segments.length },
+            'Quo message sent',
+          );
         });
+      } catch (err) {
+        logger.error({ jid, err }, 'Quo send error');
+        return; // Stop sending remaining segments on failure
+      }
 
-        if (!response.ok) {
-          const body = await response.text();
-          throw new Error(`Quo send failed ${response.status}: ${body}`);
-        }
-
-        logger.info(
-          { jid, to: customerNumber, length: prefixed.length },
-          'Quo message sent',
-        );
-      });
-    } catch (err) {
-      logger.error({ jid, err }, 'Quo send error');
+      // Small delay between segments to preserve ordering
+      if (segments.length > 1) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
     }
   }
 

@@ -26,6 +26,9 @@ export interface LineItem {
   total: number;
 }
 
+/** 'full' = charge everything now, 'deposit' = charge deposit only (balance due before rental) */
+export type PaymentMode = 'full' | 'deposit';
+
 export interface PriceBreakdown {
   equipment: EquipmentConfig;
   numDays: number;
@@ -34,6 +37,10 @@ export interface PriceBreakdown {
   deposit: number;
   balance: number;
   addOns: string[];
+  /** What the customer pays at checkout — full amount or deposit only */
+  paymentMode: PaymentMode;
+  /** Amount charged to Square right now */
+  chargeNow: number;
 }
 
 export interface Customer {

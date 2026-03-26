@@ -18,6 +18,7 @@ import {
   initDb, generateBookingId, createBooking, getBooking,
   getBookingByOrderId, updateBookingStatus, setCalendarEventId,
   hasOverlappingBooking, cancelBooking, getActiveBookings, getBookingsByEmail,
+  expireStalePendingBookings,
 } from './db.js';
 import {
   sendOwnerNotification, sendCustomerConfirmation,
@@ -118,7 +119,13 @@ async function handleAvailability(req: http.IncomingMessage, res: http.ServerRes
     return;
   }
 
-  const busySlots = await getBookedSlots(body.equipment, body.startDate, body.endDate);
+  let busySlots: any[] = [];
+  try {
+    busySlots = await getBookedSlots(body.equipment, body.startDate, body.endDate);
+  } catch (err: any) {
+    console.error('[availability] Calendar check failed:', err.message);
+    // Return empty busy slots so the form still works
+  }
   json(res, 200, {
     equipment: body.equipment,
     startDate: body.startDate,
@@ -162,14 +169,24 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
     return;
   }
 
-  const available = await datesAreAvailable(equipmentKey, dates);
+  let available = true;
+  try {
+    available = await datesAreAvailable(equipmentKey, dates);
+  } catch (err: any) {
+    // Calendar API failure — log but don't block the booking
+    console.error('[checkout] Calendar availability check failed:', err.message);
+    // Continue with booking — Square payment will still work, calendar event created on webhook
+  }
   if (!available) {
     json(res, 409, { error: 'Equipment is not available for the selected dates.' });
     return;
   }
 
-  // Calculate pricing
-  const pricing = calculatePrice(equipmentKey, numDays, body.addOns || []);
+  // Calculate pricing (pass dates for same-week detection on RV)
+  // Only allow deposit mode when frontend explicitly sends 'deposit'
+  const rawMode = (body as any).paymentMode;
+  const paymentMode: 'full' | 'deposit' | undefined = rawMode === 'deposit' ? 'deposit' : 'full';
+  const pricing = calculatePrice(equipmentKey, numDays, body.addOns || [], { dates, paymentMode });
 
   // Generate booking ID and create Square payment link
   const bookingId = generateBookingId();
@@ -213,6 +230,8 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
       subtotal: pricing.subtotal,
       deposit: pricing.deposit,
       balance: pricing.balance,
+      chargeNow: pricing.chargeNow,
+      paymentMode: pricing.paymentMode,
       lineItems: pricing.lineItems,
     },
   });
@@ -236,10 +255,36 @@ async function handleSquareWebhook(req: http.IncomingMessage, res: http.ServerRe
 
     console.log(`[webhook] Payment completed for order ${orderId}`);
 
-    // Find the booking
-    const booking = getBookingByOrderId(orderId);
+    // Find the booking — check order_id first, then check order metadata for balance payments
+    let booking = getBookingByOrderId(orderId);
+    if (!booking) {
+      // Balance payments have a different order_id. Check if the order metadata has a booking_id.
+      const metadata = payment.order?.metadata || payment.metadata || {};
+      const metaBookingId = metadata.booking_id;
+      if (metaBookingId) {
+        booking = getBooking(metaBookingId);
+        if (booking) {
+          console.log(`[webhook] Found booking ${metaBookingId} via order metadata (balance payment)`);
+        }
+      }
+    }
     if (!booking) {
       console.warn(`[webhook] No booking found for order ${orderId}`);
+      return;
+    }
+
+    // Handle balance payment — booking already in 'paid' status, now fully paid
+    if (booking.status === 'paid' && booking.balance > 0) {
+      console.log(`[webhook] Balance payment received for booking ${booking.id}`);
+      updateBookingStatus(booking.id, 'confirmed');
+
+      const updatedBooking = getBooking(booking.id)!;
+      sendCustomerConfirmation(updatedBooking).catch(err =>
+        console.error(`[webhook] Balance confirmation email failed: ${err.message}`),
+      );
+      sendPaymentReceivedNotification(updatedBooking).catch(err =>
+        console.error(`[webhook] Balance owner notification failed: ${err.message}`),
+      );
       return;
     }
 
@@ -248,8 +293,10 @@ async function handleSquareWebhook(req: http.IncomingMessage, res: http.ServerRe
       return;
     }
 
-    // Full payment received upfront — go straight to confirmed
-    updateBookingStatus(booking.id, 'confirmed');
+    // Determine status: deposit-only bookings go to 'paid' (balance still owed),
+    // full-payment bookings go straight to 'confirmed'
+    const isDepositOnly = booking.balance > 0;
+    updateBookingStatus(booking.id, isDepositOnly ? 'paid' : 'confirmed');
 
     // Create calendar event
     try {
@@ -365,6 +412,7 @@ function handleGetBooking(res: http.ServerResponse, bookingId: string): void {
   const equipConfig = EQUIPMENT[booking.equipment];
   const unit = equipConfig?.unit || 'day';
 
+  const isDepositOnly = booking.balance > 0;
   json(res, 200, {
     id: booking.id,
     equipment: booking.equipmentLabel,
@@ -374,9 +422,10 @@ function handleGetBooking(res: http.ServerResponse, bookingId: string): void {
     numDays: booking.numDays,
     unit,
     subtotal: booking.subtotal,
-    total: booking.subtotal, // Full amount charged upfront
-    deposit: booking.subtotal, // Paid in full
-    balance: 0,
+    total: booking.subtotal + booking.deposit,
+    deposit: booking.deposit,
+    amountPaid: isDepositOnly ? booking.deposit : booking.subtotal + booking.deposit,
+    balance: booking.balance,
     status: booking.status,
     addOns: booking.addOns,
     customer: {
@@ -497,6 +546,12 @@ function start(): void {
     console.log(`[booking-api] Sheridan Rentals Booking API listening on port ${PORT}`);
     console.log(`[booking-api] Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
   });
+
+  // Expire stale pending bookings every 5 minutes (frees blocked dates)
+  setInterval(() => {
+    const expired = expireStalePendingBookings(30);
+    if (expired > 0) console.log(`[cleanup] Expired ${expired} stale pending booking(s)`)
+  }, 5 * 60 * 1000);
 
   // Graceful shutdown
   const shutdown = () => {

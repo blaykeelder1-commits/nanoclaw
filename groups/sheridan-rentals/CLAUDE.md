@@ -205,10 +205,20 @@ After each conversation, update `playbook.md` with patterns: common questions, o
 
 ## Tools Available
 
-- Google Calendar — Check availability, create/update/delete bookings
+- Google Calendar — Check availability, create/update/delete bookings (use `--calendar-id` for the right equipment)
 - Send Email — Owner notifications, booking confirmations
 - Google Sheets — Pricing, inventory reference
-- Booking Query — Query the bookings database for booking details, upcoming schedule, and daily digest data
+- Booking Tool — Full booking management via `npx tsx tools/booking/query-bookings.ts`:
+  - `list [--status confirmed] [--equipment rv] [--days 7]` — List bookings with filters
+  - `get <booking-id>` — Get full booking details
+  - `summary` — Upcoming week overview
+  - `digest` — Daily digest (pickups, revenue, pending)
+  - `unpaid-balances` — Find deposit-only bookings with balance still owed
+  - `update-status <id> <status>` — Change status (pending/paid/confirmed/cancelled/refunded)
+  - `update-dates <id> <date1,date2,...>` — Change rental dates (recalculates pricing)
+  - `update-customer <id> --first X --last Y --email Z --phone W` — Update customer info
+  - `add-note <id> "note text"` — Add a timestamped note to a booking
+  - `cancel <id>` — Cancel a booking (remember to also delete the Google Calendar event)
 
 ## Message Formatting
 

@@ -126,21 +126,44 @@ export async function sendCustomerConfirmation(booking: Booking): Promise<void> 
     ? dates[0]
     : `${dates[0]} to ${dates[dates.length - 1]}`;
 
+  const isDepositOnly = booking.balance > 0;
+  const amountPaid = isDepositOnly ? booking.deposit : booking.subtotal + booking.deposit;
+  const subject = isDepositOnly
+    ? `Deposit Received — ${booking.equipmentLabel} | Sheridan Rentals`
+    : `Booking Confirmed — ${booking.equipmentLabel} | Sheridan Rentals`;
+  const headline = isDepositOnly ? 'Deposit Received!' : 'Booking Confirmed!';
+  const intro = isDepositOnly
+    ? `Your $${booking.deposit.toFixed(2)} deposit has been received and your dates are reserved! Remaining balance of $${booking.balance.toFixed(2)} is due before your rental starts.`
+    : 'Your payment has been received and your booking is confirmed! Here are your details:';
+
+  const balanceRow = isDepositOnly
+    ? `<tr><td style="padding: 4px 0; font-weight: 600; color: #d97706;">Balance Due:</td><td style="color: #d97706;">$${booking.balance.toFixed(2)} (due before pickup)</td></tr>`
+    : '';
+
+  const nextSteps = isDepositOnly
+    ? `<li>We'll send a payment link for the remaining $${booking.balance.toFixed(2)} before your pickup date</li>
+            <li>Lock code sent after full payment is received</li>
+            <li>Pickup location: Tomball, TX area</li>
+            <li>Questions? Just reply to this email or text us</li>`
+    : `<li>You'll receive the lock code to access the trailer shortly</li>
+            <li>Pickup location: Tomball, TX area</li>
+            <li>Questions? Just reply to this email or text us</li>`;
+
   await sendWithRetry(t, {
     from: getFrom(),
     to: booking.customer.email,
-    subject: `Booking Confirmed — ${booking.equipmentLabel} | Sheridan Rentals`,
+    subject,
     html: `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto;">
         <div style="background: #1d4ed8; color: white; padding: 24px; border-radius: 8px 8px 0 0; text-align: center;">
-          <h1 style="margin: 0; font-size: 24px;">Booking Confirmed!</h1>
+          <h1 style="margin: 0; font-size: 24px;">${headline}</h1>
           <p style="margin: 8px 0 0; opacity: 0.9;">Sheridan Trailer Rentals</p>
         </div>
 
         <div style="background: white; padding: 24px; border: 1px solid #e5e7eb; border-top: none;">
           <p style="font-size: 16px; color: #374151;">Hi ${escapeHtml(booking.customer.firstName)},</p>
           <p style="font-size: 14px; color: #4b5563; line-height: 1.6;">
-            Your payment has been received and your booking is confirmed! Here are your details:
+            ${intro}
           </p>
 
           <div style="background: #f9fafb; border-radius: 8px; padding: 16px; margin: 16px 0;">
@@ -148,15 +171,14 @@ export async function sendCustomerConfirmation(booking: Booking): Promise<void> 
               <tr><td style="padding: 4px 0; font-weight: 600;">Equipment:</td><td>${booking.equipmentLabel}</td></tr>
               <tr><td style="padding: 4px 0; font-weight: 600;">Dates:</td><td>${dateRange}</td></tr>
               <tr><td style="padding: 4px 0; font-weight: 600;">Duration:</td><td>${booking.numDays} day${booking.numDays > 1 ? 's' : ''}</td></tr>
-              <tr><td style="padding: 4px 0; font-weight: 600; color: #16a34a;">Total Paid:</td><td style="color: #16a34a;">$${booking.subtotal.toFixed(2)}</td></tr>
+              <tr><td style="padding: 4px 0; font-weight: 600; color: #16a34a;">Amount Paid:</td><td style="color: #16a34a;">$${amountPaid.toFixed(2)}</td></tr>
+              ${balanceRow}
             </table>
           </div>
 
           <h3 style="color: #374151; margin: 20px 0 8px;">Next Steps</h3>
           <ol style="font-size: 14px; color: #4b5563; line-height: 1.8; padding-left: 20px;">
-            <li>You'll receive the lock code to access the trailer on pickup day</li>
-            <li>Pickup location: Tomball, TX area</li>
-            <li>Questions? Just reply to this email or text us</li>
+            ${nextSteps}
           </ol>
 
           <p style="font-size: 14px; color: #4b5563; margin-top: 20px;">
