@@ -242,6 +242,30 @@ Only send ONE review request per customer. Check notes for "review requested" be
 Format as a clean, executive-style dashboard. Use numbers, not paragraphs.
 Update the Google Sheet "Revenue Dashboard" tab if it exists.`,
     { budget_usd: 0.50 });
+
+  seedTask('business-health-monthly', '0 8 1 * *',
+    `Generate the monthly business health report. Run these tools and compile results:
+
+1. Run business health score: npx tsx /workspace/project/tools/reporting/business-health.ts generate
+2. Run demand forecast: npx tsx /workspace/project/tools/inventory/demand-forecast.ts generate
+3. Run trend alerts: npx tsx /workspace/project/tools/inventory/trend-alerts.ts format
+4. Run profitability analysis: npx tsx /workspace/project/tools/inventory/profitability.ts analyze
+5. Run IDDI engagement: npx tsx /workspace/project/tools/iddi/iddi.ts engagement --days 30
+6. Check Sheridan Rentals payments: npx tsx /workspace/project/tools/square/square.ts list-payments --begin "[30 days ago ISO]" --end "[now ISO]"
+
+Compile into a single executive monthly report for Blayk covering:
+- Overall business health score and grade (from business-health.json)
+- Month-over-month score change and trend
+- Revenue highlights and concerns
+- Top 5 most profitable products and top 5 money losers
+- Products trending up/down and any critical alerts
+- Pipeline health and win rate
+- Customer engagement metrics (QR scans, polls)
+- Sheridan Rentals revenue summary
+- Top 3 priorities for next month
+
+Email the report to the owner (check owner-info.md). Also send a summary via WhatsApp.`,
+    { budget_usd: 0.75 });
 }
 
 // ── CLI readiness check ───────────────────────────────────────────

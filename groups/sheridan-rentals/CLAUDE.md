@@ -155,6 +155,13 @@ Before responding to customers, check these auto-generated files for current bus
 
 These files are automatically updated by the learning system. Use them to shape your responses — they tell you what's actually working based on data, not assumptions.
 
+## Revenue Intelligence
+
+Use Square revenue data to understand business health:
+- Revenue summary: `npx tsx tools/square/square.ts revenue-summary --days 30` for monthly revenue, period-over-period comparison, and equipment breakdown
+- Recent payments: `npx tsx tools/square/square.ts list-payments` to see last 7 days of transactions
+- When a customer asks about a past payment, use `check-payment` with their order ID
+
 ## Post-Sale Playbook
 
 After a rental is completed, follow this lifecycle:
