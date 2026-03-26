@@ -1,7 +1,7 @@
 # Facebook Page Posting — Weekly Approval Workflow
 
 ## Weekly Post Generation (Sunday 6 PM CT)
-A scheduled task generates next week's 5 Facebook posts (Mon-Fri) and sends them to the group chat for owner approval.
+A scheduled task generates next week's 5 Facebook posts (Mon-Fri), plus TikTok versions and GBP posts, and sends them to the group chat for owner approval.
 
 When the task fires:
 1. **Tiered competitor & inspiration scan**: Read `competitors.md` which has 3 tiers:
@@ -14,8 +14,10 @@ When the task fires:
 4. **Select a photo** for each post from `asset-catalog.md` using the theme-to-photo mapping. Record the Drive file ID alongside each post.
    - **If asset-catalog.md has no photos yet**: Note "NO PHOTO" in the Drive File ID column of `pending-posts.md` and generate the post as text-only. When photos become available, update `asset-catalog.md` and future posts will automatically include them.
 5. **For each Facebook post, also generate an Instagram caption version**: same photo reference, but longer caption (150-300 chars), include 15-20 relevant hashtags from the hashtag strategy in `brand-voice.md`, and note the Instagram location ID from `houston-places.md`.
-6. Write all posts to `pending-posts.md` with status "awaiting-approval" — each entry must include: message text, Drive file ID for the photo (or "NO PHOTO"), place-id from `houston-places.md`, and the Instagram caption version alongside the Facebook version.
-7. Send WhatsApp preview of all 5 posts for owner review
+6. **For posts with video content, generate a TikTok version**: short-form caption (under 150 chars), trending hashtags, hook-in-first-3-seconds format. Skip TikTok for posts without video. Note the TikTok version in `pending-posts.md` alongside Facebook/Instagram versions.
+7. **Generate 2 GBP posts for the week** (e.g., Tuesday + Thursday for Snak, Monday + Wednesday for Sheridan). GBP posts should be 100-300 words, include a CTA link (website or booking page), and target 1-2 local keywords from `keyword-strategy.md`. Add these to `pending-posts.md` with a "gbp" tag.
+8. Write all posts to `pending-posts.md` with status "awaiting-approval" — each entry must include: message text, Drive file ID for the photo (or "NO PHOTO"), place-id from `houston-places.md`, Instagram caption version, TikTok version (if video), and GBP posts for the week.
+9. Send WhatsApp preview of all posts for owner review
 
 ## Handling Approval Messages
 When the owner replies with approval (e.g., "approved", "looks good", "approve all"):
@@ -40,14 +42,19 @@ A scheduled task reads `pending-posts.md` and posts today's approved content:
       - Do NOT pass `--source`. Text-only posts should follow the "40-80 chars + engagement hook" format.
    c. Record the post_id in `pending-posts.md` and `content-calendar.md` log
    d. **After posting to Facebook, also post to Instagram** using `post-instagram.ts` with the Instagram caption version and the same image. Record the Instagram post_id in `pending-posts.md`.
+   e. **If today has a TikTok version** (video content): Post via `post-tiktok.ts` with the TikTok caption and video URL. Stagger 30-60 min after Instagram.
+   f. **If today has a GBP post scheduled**: Post via `gbp.ts post` with summary, photo URL, and CTA link. GBP posts can go out any time (no stagger needed).
 3. If not approved → skip and notify: "Skipping today's post — not yet approved"
 4. If already posted → skip silently
 
 ## Weekly Performance Review (Saturday 10 AM CT)
-A scheduled task measures engagement on this week's posts:
+A scheduled task measures engagement on this week's posts across all platforms:
 1. Collect post_ids from `pending-posts.md` and `content-calendar.md`
-2. Fetch insights via `read-facebook-insights.ts`
-3. Compare hook types, themes, and engagement across the week
-4. Update `content-learnings.md` with the week's best/worst performers and key insight
-5. Update `viral-patterns.md` if new patterns emerge
-6. Send WhatsApp performance summary
+2. Fetch Facebook insights via `read-facebook-insights.ts`
+3. Fetch Instagram insights via `read-instagram-insights.ts` for all Instagram post_ids
+4. Fetch GBP insights via `gbp.ts insights --days 7` for post views and actions
+5. Note TikTok engagement (views, likes, comments) if TikTok posts were made
+6. Compare hook types, themes, and engagement across all platforms
+7. Update `content-learnings.md` with the week's best/worst performers per platform and key insights
+8. Update `viral-patterns.md` if new patterns emerge
+9. Send WhatsApp performance summary covering all platforms

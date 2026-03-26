@@ -1,7 +1,7 @@
 ---
 name: viral-content
 description: Monitor trending content, learn viral patterns, and create high-engagement posts for SNAK Group. Use when asked to create viral content, analyze trends, or remix popular formats.
-allowed-tools: Bash(npx tsx /workspace/project/tools/social/trend-scraper.ts *), Bash(npx tsx /workspace/project/tools/social/post-tweet.ts *), Bash(npx tsx /workspace/project/tools/social/post-facebook.ts *), Bash(npx tsx /workspace/project/tools/social/post-linkedin.ts *), Bash(npx tsx /workspace/project/tools/social/read-facebook-insights.ts *)
+allowed-tools: Bash(npx tsx /workspace/project/tools/social/trend-scraper.ts *), Bash(npx tsx /workspace/project/tools/social/post-tweet.ts *), Bash(npx tsx /workspace/project/tools/social/post-facebook.ts *), Bash(npx tsx /workspace/project/tools/social/post-linkedin.ts *), Bash(npx tsx /workspace/project/tools/social/read-facebook-insights.ts *), Bash(npx tsx /workspace/project/tools/social/read-instagram-insights.ts *), Bash(npx tsx /workspace/project/tools/social/post-tiktok.ts *)
 ---
 
 # Viral Content Engine
@@ -152,6 +152,31 @@ npx tsx /workspace/project/tools/social/read-facebook-insights.ts \
 
 Returns reactions, comments, shares, reach, impressions, clicks per post.
 Use this to measure YOUR posts' engagement and compare hook types.
+
+### Fetch Instagram Performance
+
+```bash
+npx tsx /workspace/project/tools/social/read-instagram-insights.ts \
+  --post-ids "INSTA_POST_ID_1,INSTA_POST_ID_2"
+```
+
+Returns impressions, reach, engagement, saves, likes, comments per post.
+Compare Instagram performance to Facebook to learn which platform your content resonates more on.
+
+### TikTok Performance
+TikTok analytics are available via the TikTok Creator Portal. After posting, check video views, likes, comments, and shares after 48 hours. Log results in `content-learnings.md` under the TikTok section.
+
+## Monthly Cross-Platform Content Audit
+
+On the 1st of each month, review all platforms holistically:
+
+1. **Gather data**: Facebook insights (30 days), Instagram insights (30 days), GBP insights, TikTok analytics
+2. **Compare platforms**: Which platform drives the most engagement per post? Which drives the most website clicks?
+3. **Content type analysis**: Which content types (stat-lead, before/after, POV, etc.) perform best on each platform?
+4. **Audience overlap**: Are different content types resonating on different platforms?
+5. **Update strategy**: Adjust posting frequency and content type allocation per platform based on data
+6. **Update viral-patterns.md** with cross-platform insights
+7. **Report to owner** with key findings and recommendations
 
 ### Trend Analysis Command
 

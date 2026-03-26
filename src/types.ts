@@ -27,13 +27,13 @@ export interface AllowedRoot {
   description?: string;
 }
 
-export type SecretScope = 'social' | 'iddi' | 'leads';
+export type SecretScope = 'social' | 'iddi' | 'leads' | 'gbp' | 'ads' | 'seo' | 'tiktok';
 
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
   /** Additional secret scopes beyond the standard set (core + google + email).
-   *  Main always gets all secrets regardless. Options: 'social', 'iddi', 'leads' */
+   *  Main always gets all secrets regardless. Options: 'social', 'iddi', 'leads', 'gbp', 'ads', 'seo', 'tiktok' */
   extraSecretScopes?: SecretScope[];
   /** Map standard env var names to group-specific env var names from .env.
    *  E.g. { "FB_PAGE_ID": "FB_PAGE_ID_SNAK" } reads FB_PAGE_ID_SNAK from .env

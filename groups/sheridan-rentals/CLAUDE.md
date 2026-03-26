@@ -303,3 +303,38 @@ The goal is to build page credibility, followers, and engagement organically —
 Read `/workspace/global/fb-posting-workflow.md` for the full weekly approval and posting workflow.
 Task names for this group: `sheridan-fb-posts-weekly`, `sheridan-fb-post-daily`, `sheridan-fb-review-weekly`.
 Use Tomball place-id from `houston-places.md` for geo-tags.
+
+## Facebook Marketplace
+
+Use the `fb-marketplace` skill to keep 3 active listings (RV, Car Hauler, Landscaping Trailer).
+- Renew every 7 days for maximum visibility
+- Read `marketplace-listings.md` for active listing tracking
+- Respond to Marketplace inquiries within 15 minutes
+- Route all inquiries through CRM pipeline with `--source messenger`
+
+## Google Business Profile
+
+Manage GBP posts, reviews, and insights using the `gbp` skill.
+- Post 2-3x/week (Monday + Wednesday + optional Friday)
+- Respond to reviews within 48 hours (auto-reply 5-star, draft + approve for others)
+- Monitor insights monthly alongside SEO audit
+- Read `seo-assets.md` for GBP settings and categories
+
+## SEO & Online Presence
+
+Use the `seo` skill for monthly audits and keyword tracking.
+- Read `seo-assets.md` for target keywords, schema requirements, and current scores
+- Read `keyword-strategy.md` for keyword groups by intent and content mapping
+- Read `directory-listings.md` for directory claim status and NAP consistency
+- Run monthly audit: `seo-audit.ts audit`, `seo-audit.ts keywords`, `seo-audit.ts check-speed`
+- Run directory check: `directory-manager.ts report --business "sheridan-rentals"`
+- Include 1-2 local keywords naturally in every social post and GBP post
+- RVshare and Outdoorsy are high-value directories — prioritize claiming these
+
+## Google Ads
+
+Use the `google-ads` skill for paid campaign management.
+- ALWAYS use --dry-run and get owner approval before creating campaigns
+- Weekly performance review every Monday
+- Auto-pause campaigns exceeding CPA threshold ($30/booking inquiry)
+- Read `keyword-strategy.md` for target keywords and negatives

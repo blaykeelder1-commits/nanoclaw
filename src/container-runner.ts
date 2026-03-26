@@ -285,6 +285,32 @@ const SECRETS_LEADS = [
   'INSTANTLY_API_KEY',
 ] as const;
 
+// Google Business Profile
+const SECRETS_GBP = [
+  'GBP_ACCOUNT_ID',
+  'GBP_LOCATION_ID',
+] as const;
+
+// Google Ads
+const SECRETS_ADS = [
+  'GOOGLE_ADS_CUSTOMER_ID',
+  'GOOGLE_ADS_DEVELOPER_TOKEN',
+  'GOOGLE_ADS_REFRESH_TOKEN',
+  'GOOGLE_ADS_CLIENT_ID',
+  'GOOGLE_ADS_CLIENT_SECRET',
+] as const;
+
+// SEO & search
+const SECRETS_SEO = [
+  'GOOGLE_SEARCH_API_KEY',
+  'GOOGLE_SEARCH_ENGINE_ID',
+] as const;
+
+// TikTok
+const SECRETS_TIKTOK = [
+  'TIKTOK_ACCESS_TOKEN',
+] as const;
+
 // All secret keys (main group gets everything)
 const ALL_SECRET_KEYS = [
   ...SECRETS_CORE,
@@ -294,6 +320,10 @@ const ALL_SECRET_KEYS = [
   ...SECRETS_LEADS,
   ...SECRETS_IDDI,
   ...SECRETS_SQUARE,
+  ...SECRETS_GBP,
+  ...SECRETS_ADS,
+  ...SECRETS_SEO,
+  ...SECRETS_TIKTOK,
 ] as const;
 
 // Non-main groups get core + google + email (enough for briefings, CRM, follow-ups)
@@ -310,6 +340,10 @@ const SCOPE_MAP: Record<string, readonly string[]> = {
   social: SECRETS_SOCIAL,
   iddi: SECRETS_IDDI,
   leads: SECRETS_LEADS,
+  gbp: SECRETS_GBP,
+  ads: SECRETS_ADS,
+  seo: SECRETS_SEO,
+  tiktok: SECRETS_TIKTOK,
 };
 
 /**

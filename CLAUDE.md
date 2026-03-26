@@ -30,11 +30,23 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `container/skills/vending-inventory/` | Vending machine sales + inventory automation |
 | `container/skills/inventory-reconcile/` | Cross-source inventory reconciliation + blacklist engine |
 | `tools/inventory/reconcile.ts` | Unified reconciliation CLI (IDDI + Sheets → reorder/blacklist decisions) |
+| `tools/inventory/demand-forecast.ts` | Demand forecast generator (Sales Performance → trend analysis, velocity, demand-forecast.json) |
+| `tools/inventory/trend-alerts.ts` | Trend alerting engine (demand-forecast.json → critical/warning/opportunity alerts) |
+| `tools/reporting/business-health.ts` | Monthly business health score (0-100) combining revenue, inventory, pipeline, and product performance |
 | `container/skills/gmail/` | Gmail read/search/send/reply via API |
 | `container/skills/google-drive/` | Google Drive file access |
 | `container/skills/instantly/` | Instantly.ai cold email campaigns (push leads, sync replies, analytics) |
 | `container/skills/lead-finder/` | Lead generation (Maps, scraping, scoring) |
 | `container/skills/viral-content/` | Viral content engine (trend scraping, pattern learning, remixing) |
+| `container/skills/gbp/` | Google Business Profile management (posts, reviews, insights) |
+| `container/skills/seo/` | SEO auditing, keyword tracking, directory management |
+| `container/skills/google-ads/` | Google Ads campaign management and reporting |
+| `container/skills/fb-marketplace/` | Facebook Marketplace listings (Sheridan Rentals) |
+| `tools/gbp/gbp.ts` | Google Business Profile API tool |
+| `tools/ads/google-ads.ts` | Google Ads API tool |
+| `tools/seo/seo-audit.ts` | SEO audit, keyword tracking, schema validation, PageSpeed |
+| `tools/seo/directory-manager.ts` | Business directory listing manager (NAP consistency) |
+| `tools/social/fb-marketplace.ts` | Facebook Marketplace listing manager |
 | `tools/email/send-email.ts` | SMTP email sender (supports HTML templates, attachments, inline images) |
 | `tools/email/templates/` | HTML email templates (coffee-intro, vending-intro, ice-machine-intro, case-study, follow-up) |
 | `tools/social/post-tweet.ts` | X/Twitter API poster |

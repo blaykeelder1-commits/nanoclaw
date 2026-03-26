@@ -1,7 +1,7 @@
 ---
 name: social-posting
 description: Post content to X (Twitter), Facebook, and LinkedIn. Manage LinkedIn warm outreach and connection requests. Use when asked to post on social media, share content, manage social presence, or do LinkedIn outreach.
-allowed-tools: Bash(npx tsx /workspace/project/tools/social/post-tweet.ts *), Bash(npx tsx /workspace/project/tools/social/post-facebook.ts *), Bash(npx tsx /workspace/project/tools/social/post-instagram.ts *), Bash(npx tsx /workspace/project/tools/social/post-tiktok.ts *), Bash(npx tsx /workspace/project/tools/social/post-linkedin.ts *), Bash(npx tsx /workspace/project/tools/social/linkedin-connect.ts *), Bash(npx tsx /workspace/project/tools/social/read-facebook-insights.ts *), Bash(npx tsx /workspace/project/tools/drive/drive.ts *)
+allowed-tools: Bash(npx tsx /workspace/project/tools/social/post-tweet.ts *), Bash(npx tsx /workspace/project/tools/social/post-facebook.ts *), Bash(npx tsx /workspace/project/tools/social/post-instagram.ts *), Bash(npx tsx /workspace/project/tools/social/post-tiktok.ts *), Bash(npx tsx /workspace/project/tools/social/post-linkedin.ts *), Bash(npx tsx /workspace/project/tools/social/linkedin-connect.ts *), Bash(npx tsx /workspace/project/tools/social/read-facebook-insights.ts *), Bash(npx tsx /workspace/project/tools/social/read-instagram-insights.ts *), Bash(npx tsx /workspace/project/tools/social/fb-marketplace.ts *), Bash(npx tsx /workspace/project/tools/gbp/gbp.ts *), Bash(npx tsx /workspace/project/tools/drive/drive.ts *)
 ---
 
 # Social Media Posting
@@ -279,3 +279,36 @@ When generating weekly posts (Sunday), create platform-adapted versions of each 
 2. Never post identical content across all platforms
 3. **Post timing**: Stagger posts by 30-60 minutes across platforms to avoid looking automated (e.g., Facebook at 9:00 AM, Instagram at 9:30 AM, X at 10:00 AM, LinkedIn at 10:30 AM)
 4. Each platform version should feel native — not like a copy-paste from another platform
+
+## Google Business Profile Posting
+
+Post 2-3x/week per business via the GBP skill. See `container/skills/gbp/SKILL.md` for full workflow.
+
+```bash
+npx tsx /workspace/project/tools/gbp/gbp.ts post \
+  --summary "Post text" \
+  --url "https://snakgroup.biz" \
+  --photo-url "https://photo-url.jpg"
+```
+
+## Facebook Marketplace (Sheridan Rentals Only)
+
+Keep 3 active listings (RV, Car Hauler, Landscaping Trailer). Renew every 7 days. See `container/skills/fb-marketplace/SKILL.md` for full workflow.
+
+```bash
+npx tsx /workspace/project/tools/social/fb-marketplace.ts create-listing \
+  --title "RV Camper Rental - $150/night - Tomball TX" \
+  --price 150 \
+  --description "..." \
+  --category CAMPING \
+  --location "Tomball, TX"
+```
+
+## Read Instagram Insights
+
+```bash
+npx tsx /workspace/project/tools/social/read-instagram-insights.ts \
+  --post-ids "INSTA_POST_ID_1,INSTA_POST_ID_2"
+```
+
+Returns impressions, reach, engagement, saved, likes, comments per post.
