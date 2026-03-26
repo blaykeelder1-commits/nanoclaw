@@ -16,6 +16,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
     "@whiskeysockets/baileys": "github:WhiskeySockets/Baileys",
     "better-sqlite3": "^11.8.1",
     "cron-parser": "^5.5.0",

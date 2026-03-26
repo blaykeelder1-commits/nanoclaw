@@ -13,6 +13,7 @@ import {
   CLI_TIMEOUT,
   DATA_DIR,
   GROUPS_DIR,
+  IDLE_TIMEOUT,
 } from './config.js';
 import { readEnvFile } from './env.js';
 import { audit, logger } from './logger.js';
@@ -135,6 +136,20 @@ const ALLOWED_TOOLS = [
   'WebSearch',
   'WebFetch',
   'mcp__playwright__*',
+].join(',');
+
+// Interactive CLI runs also get nanoclaw MCP tools (send_message, schedule_task, etc.)
+const ALLOWED_TOOLS_INTERACTIVE = [
+  'Bash',
+  'Read',
+  'Write',
+  'Edit',
+  'Glob',
+  'Grep',
+  'WebSearch',
+  'WebFetch',
+  'mcp__playwright__*',
+  'mcp__nanoclaw__*',
 ].join(',');
 
 /**
@@ -509,6 +524,274 @@ export async function runCliAgent(
     });
 
     // Close stdin immediately — prompt is passed via -p flag
+    proc.stdin.end();
+  });
+}
+
+// ── Interactive CLI Runner ─────────────────────────────────────────
+
+export interface CliInteractiveInput extends CliInput {
+  chatJid: string;
+  sessionId?: string;
+}
+
+export interface CliInteractiveOutput {
+  status: 'success' | 'error';
+  result: string | null;
+  newSessionId?: string;
+  error?: string;
+}
+
+/**
+ * Build a per-invocation MCP config JSON that includes the nanoclaw MCP server
+ * with host-appropriate paths and env vars.
+ */
+function buildInteractiveMcpConfig(
+  chatJid: string,
+  groupFolder: string,
+  isMain: boolean,
+): string {
+  const ipcDir = path.join(DATA_DIR, 'ipc', groupFolder);
+  const mcpServerScript = path.join(PROJECT_ROOT, 'container', 'agent-runner', 'src', 'ipc-mcp-stdio.ts');
+
+  // Merge with existing cowork-mcp.json (playwright etc.)
+  let existing: Record<string, unknown> = {};
+  if (fs.existsSync(CLI_MCP_CONFIG)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(CLI_MCP_CONFIG, 'utf-8'));
+    } catch { /* ignore */ }
+  }
+
+  const config = {
+    mcpServers: {
+      ...(existing as { mcpServers?: Record<string, unknown> }).mcpServers || {},
+      nanoclaw: {
+        command: 'node',
+        args: ['--import', 'tsx/esm', mcpServerScript],
+        env: {
+          NANOCLAW_CHAT_JID: chatJid,
+          NANOCLAW_GROUP_FOLDER: groupFolder,
+          NANOCLAW_IS_MAIN: isMain ? '1' : '0',
+          NANOCLAW_IPC_DIR: ipcDir,
+        },
+      },
+    },
+  };
+
+  // Write to a temp file
+  const tmpDir = path.join(DATA_DIR, 'tmp');
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const tmpFile = path.join(tmpDir, `mcp-${groupFolder}-${Date.now()}.json`);
+  fs.writeFileSync(tmpFile, JSON.stringify(config, null, 2));
+  return tmpFile;
+}
+
+/**
+ * Run an interactive message through the CLI (Max subscription, free).
+ * The nanoclaw MCP server handles send_message via IPC files,
+ * which the host's IPC watcher forwards to WhatsApp in real-time.
+ * The final result (if any) is returned for the caller to forward.
+ */
+export async function runCliInteractive(
+  input: CliInteractiveInput,
+  onProcess?: (proc: ChildProcess) => void,
+): Promise<CliInteractiveOutput> {
+  const startTime = Date.now();
+
+  validateGroupFolder(input.groupFolder);
+
+  const groupDir = path.join(GROUPS_DIR, input.groupFolder);
+  fs.mkdirSync(groupDir, { recursive: true });
+
+  const model = input.model || CLI_MODEL;
+  const isMain = input.isMain;
+
+  logger.info(
+    { group: input.groupFolder, model, mode: 'interactive' },
+    'Spawning interactive CLI agent (Max subscription)',
+  );
+  audit('cli_interactive_spawn', { group: input.groupFolder, model });
+
+  const cwd = isMain ? PROJECT_ROOT : groupDir;
+  syncSkillsForCli(input.groupFolder, cwd);
+
+  // Build the prompt with group context
+  const claudeMdPath = path.join(groupDir, 'CLAUDE.md');
+  let fullPrompt = input.prompt;
+  if (fs.existsSync(claudeMdPath)) {
+    const claudeMd = fs.readFileSync(claudeMdPath, 'utf-8');
+    fullPrompt = `<group-context>\n${claudeMd}\n</group-context>\n\n${input.prompt}`;
+  }
+
+  const secrets = readSecrets(isMain, input.extraSecretScopes, input.secretOverrides);
+  const systemPrompt = buildSystemPrompt(input.groupFolder);
+
+  // Build MCP config with nanoclaw server
+  const mcpConfigFile = buildInteractiveMcpConfig(input.chatJid, input.groupFolder, isMain);
+
+  // Ensure IPC directories exist (for nanoclaw MCP server)
+  const groupIpcDir = path.join(DATA_DIR, 'ipc', input.groupFolder);
+  fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
+
+  const args = [
+    '-p', fullPrompt,
+    '--output-format', 'json',
+    '--model', model,
+    '--allowedTools', ALLOWED_TOOLS_INTERACTIVE,
+    '--append-system-prompt', systemPrompt,
+    '--dangerously-skip-permissions',
+    '--mcp-config', mcpConfigFile,
+  ];
+
+  // Resume session if available
+  if (input.sessionId) {
+    args.push('--resume', input.sessionId);
+  }
+
+  const env: Record<string, string> = { ...process.env as Record<string, string> };
+  for (const [key, value] of Object.entries(secrets)) {
+    env[key] = value;
+  }
+
+  const logsDir = path.join(groupDir, 'logs');
+  fs.mkdirSync(logsDir, { recursive: true });
+
+  return new Promise((resolve) => {
+    const proc = spawn('claude', args, {
+      cwd,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    if (onProcess) onProcess(proc);
+
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let exited = false;
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      logger.error(
+        { group: input.groupFolder, mode: 'interactive' },
+        `Interactive CLI timeout after ${CLI_TIMEOUT}ms`,
+      );
+      audit('cli_interactive_timeout', { group: input.groupFolder });
+      proc.kill('SIGTERM');
+      setTimeout(() => {
+        if (!exited) proc.kill('SIGKILL');
+      }, 15000);
+    }, CLI_TIMEOUT);
+
+    proc.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on('data', (data) => {
+      const chunk = data.toString();
+      stderr += chunk;
+      for (const line of chunk.trim().split('\n')) {
+        if (line) logger.debug({ cli: input.groupFolder, mode: 'interactive' }, line);
+      }
+    });
+
+    proc.on('close', (code) => {
+      exited = true;
+      clearTimeout(timeout);
+      const duration = Date.now() - startTime;
+
+      // Clean up temp MCP config
+      try { fs.unlinkSync(mcpConfigFile); } catch { /* ignore */ }
+
+      // Write log
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const logFile = path.join(logsDir, `cli-interactive-${timestamp}.log`);
+      const logLines = [
+        `=== Interactive CLI Run Log${timedOut ? ' (TIMEOUT)' : ''} ===`,
+        `Timestamp: ${new Date().toISOString()}`,
+        `Group: ${input.groupFolder}`,
+        `Model: ${model}`,
+        `Duration: ${duration}ms`,
+        `Exit Code: ${code}`,
+        `Session: ${input.sessionId || 'new'}`,
+        ``,
+      ];
+      const isVerbose = process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
+      if (isVerbose || code !== 0) {
+        logLines.push(
+          `=== Prompt ===`, input.prompt.slice(0, 2000), ``,
+          `=== Stderr ===`, stderr.slice(-5000), ``,
+          `=== Stdout ===`, stdout.slice(-5000),
+        );
+      }
+      fs.writeFileSync(logFile, logLines.join('\n'));
+
+      if (timedOut) {
+        resolve({ status: 'error', result: null, error: `CLI interactive timed out after ${CLI_TIMEOUT}ms` });
+        return;
+      }
+
+      if (code !== 0) {
+        logger.error({ group: input.groupFolder, code, duration, mode: 'interactive' }, 'Interactive CLI exited with error');
+        resolve({ status: 'error', result: null, error: `CLI exited with code ${code}: ${stderr.slice(-200)}` });
+        return;
+      }
+
+      // Parse output — extract result and session ID
+      try {
+        const output = JSON.parse(stdout);
+        let resultText: string | null = null;
+        let newSessionId: string | undefined;
+
+        if (Array.isArray(output)) {
+          // Extract session ID from init message if present
+          const initBlock = output.find((b: { type?: string }) => b.type === 'system' && (b as { subtype?: string }).subtype === 'init');
+          if (initBlock && 'session_id' in initBlock) {
+            newSessionId = (initBlock as { session_id: string }).session_id;
+          }
+
+          const resultBlock = [...output].reverse().find((b: { type?: string }) => b.type === 'result');
+          if (resultBlock?.result) {
+            resultText = resultBlock.result;
+          } else {
+            resultText = output
+              .filter((b: { type?: string }) => b.type === 'text')
+              .map((b: { text?: string }) => b.text)
+              .join('\n')
+              .trim() || null;
+          }
+        } else if (typeof output === 'object' && output.result) {
+          resultText = output.result;
+          newSessionId = output.session_id;
+        }
+
+        logger.info(
+          { group: input.groupFolder, duration, hasResult: !!resultText, newSessionId, mode: 'interactive' },
+          'Interactive CLI completed',
+        );
+
+        resolve({ status: 'success', result: resultText, newSessionId });
+      } catch (err) {
+        const raw = stdout.trim();
+        if (raw) {
+          logger.warn({ group: input.groupFolder, error: err, mode: 'interactive' }, 'Failed to parse interactive CLI output, using raw');
+          resolve({ status: 'success', result: raw });
+        } else {
+          logger.error({ group: input.groupFolder, error: err, mode: 'interactive' }, 'Interactive CLI produced no output');
+          resolve({ status: 'error', result: null, error: `CLI produced no output: ${stderr.slice(-200) || 'unknown error'}` });
+        }
+      }
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timeout);
+      logger.error({ group: input.groupFolder, error: err, mode: 'interactive' }, 'Interactive CLI spawn error');
+      // Clean up temp MCP config
+      try { fs.unlinkSync(mcpConfigFile); } catch { /* ignore */ }
+      resolve({ status: 'error', result: null, error: `CLI spawn error: ${err.message}` });
+    });
+
     proc.stdin.end();
   });
 }

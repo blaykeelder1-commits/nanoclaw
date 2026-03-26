@@ -1,6 +1,8 @@
 import {
   ASSISTANT_NAME,
   BUDGET_INTERACTIVE,
+  CLI_ENABLED,
+  CLI_FALLBACK_ENABLED,
   CONTAINER_TIMEOUT_MS,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
@@ -16,6 +18,7 @@ import {
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
+import { runCliInteractive } from './cli-runner.js';
 import {
   getAllTasks,
   getDailySpendUsd,
@@ -191,6 +194,64 @@ async function runAgent(
   const availableGroups = getAvailableGroups();
   writeGroupsSnapshot(group.folder, isMain, availableGroups, new Set(Object.keys(registeredGroups)));
 
+  // --- CLI path: try host Claude Code first (Max subscription, no API cost) ---
+  if (CLI_ENABLED) {
+    try {
+      logger.info({ group: group.name, mode: 'cli-interactive' }, 'Trying CLI for interactive message');
+
+      const cliOutput = await withTimeout(
+        runCliInteractive(
+          {
+            prompt,
+            groupFolder: group.folder,
+            isMain,
+            chatJid,
+            sessionId,
+            extraSecretScopes: group.containerConfig?.extraSecretScopes,
+            secretOverrides: group.containerConfig?.secretOverrides,
+          },
+          (proc) => queue.registerProcess(chatJid, proc, `cli-interactive-${group.folder}`, group.folder),
+        ),
+        CONTAINER_TIMEOUT_MS,
+        'cli interactive agent',
+      );
+
+      if (cliOutput.newSessionId) {
+        updateSession(group.folder, cliOutput.newSessionId);
+      }
+
+      if (cliOutput.status === 'error') {
+        logger.warn({ group: group.name, error: cliOutput.error }, 'Interactive CLI failed');
+
+        if (CLI_FALLBACK_ENABLED) {
+          logger.warn({ group: group.name, event: 'cli_interactive_fallback' }, 'Falling back to container (API credits)');
+          // Fall through to container path below
+        } else {
+          // CLI failed and no fallback — still try to send the error context
+          logger.error({ group: group.name, event: 'cli_interactive_no_fallback' }, 'CLI failed, no container fallback');
+          return 'error';
+        }
+      } else {
+        // CLI succeeded — forward result if not already sent via send_message MCP tool
+        if (cliOutput.result && onOutput) {
+          await onOutput({
+            status: 'success',
+            result: cliOutput.result,
+            newSessionId: cliOutput.newSessionId,
+          });
+        }
+        return 'success';
+      }
+    } catch (err) {
+      logger.warn({ group: group.name, err }, 'Interactive CLI threw, trying container fallback');
+      if (!CLI_FALLBACK_ENABLED) {
+        logger.error({ group: group.name }, 'CLI failed and CLI_FALLBACK_ENABLED=false');
+        return 'error';
+      }
+    }
+  }
+
+  // --- Container fallback path (API credits) ---
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
