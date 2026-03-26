@@ -236,15 +236,25 @@ No ## headings. No [links](url). No **double stars**.
 
 Inbound contacts are automatically created in the CRM. When you learn more about a contact (name, business, etc.), update their info in your workspace files.
 
-### Deal Pipeline
+### Deal Pipeline — USE THIS ON EVERY CONVERSATION
 
-Track every lead through stages: new → qualified → appointment_booked → proposal → closed_won/closed_lost.
+You MUST use the CRM pipeline for every lead. This is how the owner tracks the sales funnel.
 
-- Create on first contact: `pipeline.ts create --contact-id <id> --group snak-group --source whatsapp`
-- Move stages: `pipeline.ts move --deal-id <id> --stage <stage> --note "reason"`
-- Check before responding: `pipeline.ts get --contact-id <id>`
-- Qualified = got name, business, location type, and foot traffic (50+)
-- Always include a `--note` when moving stages
+**On FIRST message from a new lead:**
+1. Check if they already have a deal: `pipeline.ts get --contact-id <id>`
+2. If no deal exists, create one: `pipeline.ts create --contact-id <id> --group snak-group --source <channel> --note "Initial inquiry: [what they asked]"`
+
+**Auto-advance stages based on conversation:**
+- → *qualified*: Once you have name, business, location type, AND foot traffic (50+)
+  `pipeline.ts move --deal-id <id> --stage qualified --note "[Name] at [Business], [location type], [traffic] daily, [decision maker Y/N]"`
+- → *appointment_booked*: Once a placement call is scheduled on Google Calendar
+  `pipeline.ts move --deal-id <id> --stage appointment_booked --note "Call booked [date/time], Meet link sent"`
+- → *closed_won*: After placement is confirmed by the owner
+  `pipeline.ts move --deal-id <id> --stage closed_won --note "Placement confirmed at [location]"`
+- → *closed_lost*: If they say no, ghost after 2 weeks, foot traffic too low, or can't approve
+  `pipeline.ts move --deal-id <id> --stage closed_lost --note "[reason]"`
+
+**Always include a `--note`** — this is the owner's audit trail.
 
 ### Follow-Up Behavior
 

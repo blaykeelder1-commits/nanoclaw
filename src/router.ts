@@ -21,6 +21,24 @@ export function formatMessages(messages: NewMessage[]): string {
   return `<messages>\n${lines.join('\n')}\n</messages>`;
 }
 
+export function formatConversationHistory(
+  messages: NewMessage[],
+  assistantName: string,
+): string {
+  if (messages.length === 0) return '';
+
+  const lines = messages.map((m) => {
+    const name = m.is_bot_message ? `${assistantName} (you)` : m.sender_name;
+    return `<message sender="${escapeXml(name)}" time="${m.timestamp}">${escapeXml(m.content)}</message>`;
+  });
+
+  return [
+    '<conversation-history note="Recent conversation history for context. Do NOT re-answer or repeat these messages — they have already been handled. Only respond to the NEW messages below.">',
+    ...lines,
+    '</conversation-history>',
+  ].join('\n');
+}
+
 export function stripInternalTags(text: string): string {
   return text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
 }

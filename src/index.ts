@@ -4,6 +4,7 @@ import {
   CLI_ENABLED,
   CLI_FALLBACK_ENABLED,
   CONTAINER_TIMEOUT_MS,
+  HISTORY_MESSAGE_LIMIT,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   MAX_DAILY_SPEND_USD,
@@ -21,13 +22,14 @@ import {
 import { runCliInteractive } from './cli-runner.js';
 import {
   getAllTasks,
+  getConversationHistory,
   getDailySpendUsd,
   getMessagesSince,
   getNewMessages,
   setRouterState,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
-import { formatMessages, formatOutbound } from './router.js';
+import { formatConversationHistory, formatMessages, formatOutbound } from './router.js';
 import type { NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import {
@@ -58,7 +60,7 @@ import {
 } from './routing.js';
 
 // Re-export for backwards compatibility during refactor
-export { escapeXml, formatMessages } from './router.js';
+export { escapeXml, formatConversationHistory, formatMessages } from './router.js';
 export { getAvailableGroups, _setRegisteredGroups } from './registry.js';
 
 // ── Utilities ─────────────────────────────────────────────────────
@@ -99,6 +101,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       { dailySpend: dailySpend.toFixed(2), limit: MAX_DAILY_SPEND_USD, group: group.name },
       'Daily spend limit reached — skipping container spawn',
     );
+    // Send a friendly message so the customer isn't left hanging in silence
+    const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
+    if (!isMainGroup) {
+      await routeOutbound(
+        chatJid,
+        "Hey! I'm a little tied up right now — I'll get back to you shortly. Thanks for your patience!",
+      );
+    }
     return true;
   }
 
@@ -113,7 +123,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages);
+  // Inject recent conversation history (including Andy's prior responses) so Claude
+  // has multi-turn context even though each CLI invocation starts a fresh session.
+  const oldestNewTimestamp = missedMessages[0].timestamp;
+  const history = getConversationHistory(chatJid, oldestNewTimestamp, HISTORY_MESSAGE_LIMIT);
+  const historyBlock = formatConversationHistory(history, ASSISTANT_NAME);
+  const newMessagesBlock = formatMessages(missedMessages);
+  const prompt = historyBlock
+    ? `${historyBlock}\n\n${newMessagesBlock}`
+    : newMessagesBlock;
   const nextCursor = missedMessages[missedMessages.length - 1].timestamp;
 
   logger.info({ group: group.name, messageCount: missedMessages.length }, 'Processing messages');
@@ -152,6 +170,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (output === 'error' || hadError) {
     // Clear piped cursor so piped messages also get retried
     pipedCursors.delete(chatJid);
+
+    // Alert main group immediately so the owner knows
+    if (!isMainGroup) {
+      const mainJid = Object.entries(registeredGroups).find(
+        ([, g]) => g.folder === MAIN_GROUP_FOLDER,
+      )?.[0];
+      if (mainJid) {
+        routeOutbound(
+          mainJid,
+          `🚨 Agent error in *${group.name}* — ${outputSentToUser ? 'partial response sent, cursor advanced' : 'no response sent, will retry'}`,
+        ).catch(() => {});
+      }
+    }
 
     if (outputSentToUser) {
       logger.warn({ group: group.name }, 'Agent error after output sent, advancing cursor');

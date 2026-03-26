@@ -146,6 +146,14 @@ export const CLI_TIMEOUT = parseInt(process.env.CLI_TIMEOUT || '600000', 10); //
 export const CLI_MODEL = process.env.CLI_MODEL || 'claude-sonnet-4-6'; // Sonnet free with Max
 export const CLI_MCP_CONFIG = path.resolve(PROJECT_ROOT, 'cowork-mcp.json');
 
+// --- Conversation History ---
+// Number of recent messages (including bot responses) to inject as context.
+// ~50 messages ≈ 3-5K tokens — well within budget, provides multi-turn continuity.
+export const HISTORY_MESSAGE_LIMIT = parseInt(
+  process.env.HISTORY_MESSAGE_LIMIT || '50',
+  10,
+);
+
 // --- Groq (voice transcription) ---
 export const GROQ_API_KEY =
   process.env.GROQ_API_KEY || envConfig.GROQ_API_KEY || '';

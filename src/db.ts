@@ -40,6 +40,7 @@ function createSchema(database: Database.Database): void {
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
     CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages(chat_jid, timestamp);
 
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
       id TEXT PRIMARY KEY,
@@ -562,6 +563,27 @@ export function getMessagesSince(
   return db
     .prepare(sql)
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`) as NewMessage[];
+}
+
+/**
+ * Fetch recent conversation history for a chat, INCLUDING bot responses.
+ * Returns messages in chronological order (oldest first).
+ * Used to inject multi-turn context into stateless CLI invocations.
+ */
+export function getConversationHistory(
+  chatJid: string,
+  beforeTimestamp: string,
+  limit: number,
+): NewMessage[] {
+  const sql = `
+    SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message
+    FROM messages
+    WHERE chat_jid = ? AND timestamp < ?
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `;
+  const rows = db.prepare(sql).all(chatJid, beforeTimestamp, limit) as NewMessage[];
+  return rows.reverse();
 }
 
 /**

@@ -1,10 +1,14 @@
 /**
  * Error suppressor — prevents internal error messages from being sent to customers.
  * Catches "Credit balance is too low", "rate_limit_error", etc.
+ * Transforms them into a friendly fallback so the customer isn't left hanging.
  */
 import { ERROR_PATTERNS } from '../../filters.js';
 import { logger } from '../../logger.js';
 import { OutboundStage, OutboundMessage, OutboundVerdict } from '../types.js';
+
+const FRIENDLY_FALLBACK =
+  "Sorry about that — I'm having a brief technical hiccup. Give me just a moment and I'll get back to you!";
 
 export class ErrorSuppressor implements OutboundStage {
   name = 'error-suppressor';
@@ -19,10 +23,7 @@ export class ErrorSuppressor implements OutboundStage {
     }
     if (ERROR_PATTERNS.some(p => p.test(text))) {
       logger.warn({ jid: msg.chatJid }, 'Suppressed error message from outbound, sending friendly fallback');
-      return {
-        action: 'transform',
-        text: 'Let me look into that and get back to you shortly.',
-      };
+      return { action: 'transform', text: FRIENDLY_FALLBACK };
     }
     return { action: 'pass' };
   }

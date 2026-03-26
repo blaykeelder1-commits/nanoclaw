@@ -75,15 +75,17 @@ export const ERROR_PATTERNS: RegExp[] = [
 ];
 
 // ── Rate limits (per-channel and global) ──
+// Limits must support real customer service conversations (multi-turn booking
+// flows, owner notifications, follow-ups) without throttling during peak hours.
 export const RATE_LIMITS = {
   /** Global per-JID outbound limits (main group exempt). */
-  outbound: { perHour: 5, perDay: 20 },
+  outbound: { perHour: 20, perDay: 80 },
   /** Per-sender/recipient limits by channel. */
-  email:     { perHour: 2, perDay: 10 },
-  sms:       { perHour: 3, perDay: 15 },
-  messenger: { perHour: 3, perDay: 15 },
-  web:       { perHour: 10, perDay: 50 },
-  whatsapp:  { perHour: 10, perDay: 50 },
+  email:     { perHour: 10, perDay: 40 },
+  sms:       { perHour: 10, perDay: 40 },
+  messenger: { perHour: 15, perDay: 60 },
+  web:       { perHour: 20, perDay: 80 },
+  whatsapp:  { perHour: 20, perDay: 80 },
   /** Inbound webhook IP rate limit. */
   webhookPerIp: { perMinute: 30 },
   /** Outbound dedup window. */

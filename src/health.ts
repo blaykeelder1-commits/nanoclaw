@@ -306,22 +306,23 @@ async function runHealthCheck(deps: HealthMonitorDeps): Promise<void> {
     logger.debug({ status }, 'Health check OK');
   }
 
-  // Alert if critical for >30 minutes
+  // Alert immediately on first critical detection, then every 30 min if still critical
   if (status === 'critical') {
-    if (!alertedCriticalAt) {
-      alertedCriticalAt = Date.now();
-    } else if (Date.now() - alertedCriticalAt > 30 * 60 * 1000) {
+    const shouldAlert = !alertedCriticalAt || Date.now() - alertedCriticalAt > 30 * 60 * 1000;
+    if (shouldAlert) {
       const mainJid = deps.getMainGroupJid();
       if (mainJid) {
-        const alertText = `⚠️ Health Alert (critical for 30+ min):\n${issues.join('\n')}`;
+        const prefix = alertedCriticalAt ? '⚠️ Health still critical' : '🚨 Health Alert';
+        const alertText = `${prefix}:\n${issues.join('\n')}`;
         try {
           await deps.sendAlert(mainJid, alertText);
           logger.info('Critical health alert sent to main group');
-          // Reset so we don't spam — will alert again after another 30 min
           alertedCriticalAt = Date.now();
         } catch (err) {
           logger.error({ err }, 'Failed to send health alert');
         }
+      } else {
+        alertedCriticalAt = Date.now();
       }
     }
   } else {

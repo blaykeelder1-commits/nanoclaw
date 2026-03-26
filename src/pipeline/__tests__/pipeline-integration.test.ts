@@ -95,9 +95,10 @@ describe('OutboundPipeline', () => {
     expect(pipeline.process(outMsg('Sure, happy to help!'))).toBe('Sure, happy to help!');
   });
 
-  it('transforms error messages to friendly fallback', () => {
+  it('replaces error messages with friendly fallback', () => {
     const pipeline = buildPipeline();
-    expect(pipeline.process(outMsg('Credit balance is too low'))).toBe('Let me look into that and get back to you shortly.');
+    const result = pipeline.process(outMsg('Credit balance is too low'));
+    expect(result).toContain('technical hiccup');
   });
 
   it('suppresses duplicate outbound messages', () => {
