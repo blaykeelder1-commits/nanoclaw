@@ -48,3 +48,13 @@ export function formatOutbound(rawText: string): string {
   if (!text) return '';
   return text;
 }
+
+/** Derive the human-readable channel name from a chat JID. */
+export function channelFromJid(jid: string): string {
+  if (jid.startsWith('quo:')) return 'sms';
+  if (jid.startsWith('web:')) return 'web';
+  if (jid.startsWith('email:')) return 'email';
+  if (jid.startsWith('messenger:')) return 'messenger';
+  if (jid.includes('@g.us') || jid.includes('@s.whatsapp.net')) return 'whatsapp';
+  return 'unknown';
+}

@@ -226,11 +226,14 @@ function buildVolumeMounts(
  * This limits blast radius if a non-main container is prompt-injected.
  */
 
-// Auth keys every container needs to call the Claude API
-const SECRETS_CORE = [
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'ANTHROPIC_API_KEY',
-] as const;
+// Auth keys every container needs to call the Claude API.
+// If CLAUDE_CODE_OAUTH_TOKEN is available (Max subscription), skip ANTHROPIC_API_KEY
+// so the container uses OAuth credentials from ~/.claude/.credentials.json instead
+// of the API key (which may be out of credits).
+const SECRETS_CORE = (process.env.CLAUDE_CODE_OAUTH_TOKEN
+  ? ['CLAUDE_CODE_OAUTH_TOKEN'] as const
+  : ['ANTHROPIC_API_KEY'] as const
+);
 
 // Google APIs (Sheets, Calendar, Drive, Gmail) — needed by most groups
 const SECRETS_GOOGLE = [

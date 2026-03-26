@@ -1,4 +1,4 @@
-import { createComplaint } from './db.js';
+import { createComplaint, logResponseMetric, markCustomerReplied } from './db.js';
 import { RATE_LIMITS } from './filters.js';
 import { logger } from './logger.js';
 import {
@@ -12,11 +12,23 @@ import {
   OutboundDedup,
   ReplyLoopDetector,
   EscalationDetector,
+  AuthenticityGuard,
 } from './pipeline/index.js';
 import type { InboundMessage } from './pipeline/types.js';
 import type { Channel } from './types.js';
 import { MAIN_GROUP_FOLDER } from './config.js';
 import { getRegisteredGroups } from './registry.js';
+
+// ── Response time tracking (for adaptive learning) ──────────────
+
+const pendingResponseTracking = new Map<string, { timestamp: number; channel: string; groupFolder: string }>();
+
+/** Called when an inbound message passes the pipeline — starts the response timer. */
+export function trackInboundForResponse(chatJid: string, channel: string, groupFolder: string): void {
+  pendingResponseTracking.set(chatJid, { timestamp: Date.now(), channel, groupFolder });
+  // Also mark that the customer replied to the previous bot message
+  try { markCustomerReplied(chatJid); } catch { /* non-critical */ }
+}
 
 // ── Pipeline stats ───────────────────────────────────────────────
 
@@ -100,6 +112,7 @@ const outboundRateLimiter = new OutboundRateLimiter(
 
 const outboundPipeline = new OutboundPipeline()
   .add(new ErrorSuppressor())
+  .add(new AuthenticityGuard())
   .add(outboundRateLimiter)
   .add(new OutboundDedup());
 
@@ -203,4 +216,20 @@ export async function routeOutbound(jid: string, text: string): Promise<void> {
   outboundRateLimiter.recordSend(jid);
   outboundProcessed++;
   replyLoopDetector.recordOutbound(jid);
+
+  // Log response metric for adaptive learning
+  const pending = pendingResponseTracking.get(jid);
+  if (pending) {
+    pendingResponseTracking.delete(jid);
+    try {
+      logResponseMetric({
+        chat_jid: jid,
+        channel: pending.channel,
+        group_folder: pending.groupFolder,
+        response_time_ms: Date.now() - pending.timestamp,
+        message_length: finalText.length,
+        created_at: new Date().toISOString(),
+      });
+    } catch { /* non-critical — don't break outbound on metrics failure */ }
+  }
 }

@@ -269,9 +269,13 @@ function buildSystemPrompt(groupFolder: string): string {
     'Do NOT try to use agent-browser — it does not exist on the host.',
     'Playwright MCP provides tools like: browser_navigate, browser_click, browser_fill, browser_snapshot, browser_wait_for_text, etc.',
     '',
+    '## Channel Awareness',
+    'The prompt includes a `<channel>` tag indicating which channel this message arrived on (sms, whatsapp, web, messenger, email).',
+    'Use the channel tag to select the correct formatting rules from your CLAUDE.md "Message Formatting" section.',
+    '',
     '## Sending Messages',
-    'You cannot send WhatsApp messages directly. Instead, write your final output as your response.',
-    'The NanoClaw scheduler will relay your output to the appropriate WhatsApp group.',
+    'You cannot send messages directly. Instead, write your final output as your response.',
+    'The NanoClaw scheduler will relay your output to the appropriate channel.',
     '',
     '## IPC',
     `IPC directory: ${path.join(DATA_DIR, 'ipc', groupFolder)}`,
@@ -634,8 +638,12 @@ export async function runCliInteractive(
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
 
+  // Pass prompt via stdin to avoid E2BIG when CLAUDE.md + history exceeds
+  // the OS argument size limit (~128KB on Linux).
+  const useStdinPrompt = Buffer.byteLength(fullPrompt) > 80000;
+
   const args = [
-    '-p', fullPrompt,
+    ...(useStdinPrompt ? ['-p', '-'] : ['-p', fullPrompt]),
     '--output-format', 'json',
     '--model', model,
     '--allowedTools', ALLOWED_TOOLS_INTERACTIVE,
@@ -671,6 +679,12 @@ export async function runCliInteractive(
     });
 
     if (onProcess) onProcess(proc);
+
+    // Write prompt via stdin if too large for argv
+    if (useStdinPrompt && proc.stdin) {
+      proc.stdin.write(fullPrompt);
+      proc.stdin.end();
+    }
 
     let stdout = '';
     let stderr = '';

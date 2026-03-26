@@ -29,7 +29,7 @@ import {
   setRouterState,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
-import { formatConversationHistory, formatMessages, formatOutbound } from './router.js';
+import { formatConversationHistory, formatMessages, formatOutbound, channelFromJid } from './router.js';
 import type { NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import {
@@ -57,10 +57,11 @@ import {
   routeOutbound,
   findChannel,
   getChannels,
+  trackInboundForResponse,
 } from './routing.js';
 
 // Re-export for backwards compatibility during refactor
-export { escapeXml, formatConversationHistory, formatMessages } from './router.js';
+export { escapeXml, formatConversationHistory, formatMessages, channelFromJid } from './router.js';
 export { getAvailableGroups, _setRegisteredGroups } from './registry.js';
 
 // ── Utilities ─────────────────────────────────────────────────────
@@ -129,12 +130,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const history = getConversationHistory(chatJid, oldestNewTimestamp, HISTORY_MESSAGE_LIMIT);
   const historyBlock = formatConversationHistory(history, ASSISTANT_NAME);
   const newMessagesBlock = formatMessages(missedMessages);
+  const channelTag = `<channel>${channelFromJid(chatJid)}</channel>`;
   const prompt = historyBlock
-    ? `${historyBlock}\n\n${newMessagesBlock}`
-    : newMessagesBlock;
+    ? `${channelTag}\n\n${historyBlock}\n\n${newMessagesBlock}`
+    : `${channelTag}\n\n${newMessagesBlock}`;
   const nextCursor = missedMessages[missedMessages.length - 1].timestamp;
 
   logger.info({ group: group.name, messageCount: missedMessages.length }, 'Processing messages');
+
+  // Track inbound for response time metrics (adaptive learning)
+  trackInboundForResponse(chatJid, channelFromJid(chatJid), group.folder);
 
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const resetIdleTimer = () => {

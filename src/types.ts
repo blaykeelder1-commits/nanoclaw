@@ -210,6 +210,48 @@ export interface ConversionStats {
   conversionRate: number;
 }
 
+// --- Learning system types ---
+
+export interface ResponseMetric {
+  chat_jid: string;
+  channel: string;
+  group_folder: string;
+  response_time_ms: number;
+  message_length: number;
+  customer_replied?: number;
+  created_at: string;
+}
+
+export type LearningEventType =
+  | 'conversion_won'
+  | 'conversion_lost'
+  | 'complaint_resolved'
+  | 'message_ignored'
+  | 'error_pattern'
+  | 'stage_transition';
+
+export interface LearningEvent {
+  event_type: LearningEventType;
+  group_folder: string;
+  details: string; // JSON blob
+  processed?: number;
+  created_at: string;
+}
+
+export interface MessageVariant {
+  id: string;
+  category: string;
+  variant_name: string;
+  template: string;
+  times_used: number;
+  times_converted: number;
+  times_replied: number;
+  avg_sentiment: number | null;
+  status: 'active' | 'winner' | 'retired';
+  created_at: string;
+  updated_at: string;
+}
+
 // --- Health monitoring ---
 
 export interface HealthInfo {

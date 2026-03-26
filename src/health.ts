@@ -20,6 +20,8 @@ import {
   getDueTasks,
   getHealthState,
   getLastMessageTimestamp,
+  getTaskFailureStreaks,
+  logLearningEvent,
   pruneOldLogs,
   pruneOldMessageIds,
   setHealthState,
@@ -252,6 +254,26 @@ async function runHealthCheck(deps: HealthMonitorDeps): Promise<void> {
       // non-critical
     }
   }
+
+  // Check 9: Task failure streaks (self-healing — adaptive learning)
+  try {
+    const streaks = getTaskFailureStreaks(3);
+    for (const streak of streaks) {
+      if (status === 'ok') status = 'warning';
+      issues.push(`Task "${streak.task_id}" has ${streak.consecutive_failures} consecutive failures`);
+      // Log learning event so the analysis task can write guidance
+      logLearningEvent({
+        event_type: 'error_pattern',
+        group_folder: 'main',
+        details: JSON.stringify({
+          task_id: streak.task_id,
+          consecutive_failures: streak.consecutive_failures,
+          last_error: streak.last_error.slice(0, 500),
+        }),
+        created_at: new Date().toISOString(),
+      });
+    }
+  } catch { /* non-critical */ }
 
   // Persist status
   setHealthState('status', status);

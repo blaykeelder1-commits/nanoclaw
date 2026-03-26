@@ -15,3 +15,4 @@ export { OutboundDedup } from './stages/outbound-dedup.js';
 export { isWebhookRateLimited } from './stages/webhook-guard.js';
 export { ReplyLoopDetector } from './stages/reply-loop-detector.js';
 export { EscalationDetector } from './stages/escalation-detector.js';
+export { AuthenticityGuard } from './stages/authenticity-guard.js';

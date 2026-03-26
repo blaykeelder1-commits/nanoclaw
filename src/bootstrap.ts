@@ -24,6 +24,7 @@ import {
 import { CronExpressionParser } from 'cron-parser';
 import { startHealthMonitor } from './health.js';
 import { startHealthServer } from './health-endpoint.js';
+import { startDashboard } from './dashboard.js';
 import { startIpcWatcher } from './ipc.js';
 import { formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
@@ -351,6 +352,11 @@ export function startServices(queue: GroupQueue, whatsapp: WhatsAppChannel): voi
       pipelineStats: getPipelineStats(),
     }),
   });
+
+  // Performance dashboard
+  const dashboardPort = parseInt(process.env.DASHBOARD_PORT || '9091', 10);
+  startDashboard(dashboardPort);
+  logger.info({ port: dashboardPort }, 'Dashboard started');
 
   startHealthMonitor({
     channels: getChannels(),

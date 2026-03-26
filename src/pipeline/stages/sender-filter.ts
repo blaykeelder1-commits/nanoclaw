@@ -3,7 +3,7 @@
  * Replaces IGNORE_PATTERNS in gmail.ts and the isAutoResponse() function.
  * Only active for email channel by default (SMS/Messenger don't have these issues).
  */
-import { IGNORE_SENDER_PATTERNS, AUTO_REPLY_SUBJECT_PREFIXES } from '../../filters.js';
+import { IGNORE_SENDER_PATTERNS, AUTO_REPLY_SUBJECT_PREFIXES, MARKETING_SUBJECT_PATTERNS } from '../../filters.js';
 import { logger } from '../../logger.js';
 import { InboundStage, InboundMessage, StageVerdict } from '../types.js';
 
@@ -57,6 +57,8 @@ function isAutoResponse(rawHeaders: string): boolean {
   if (subjectMatch) {
     const subj = subjectMatch[1].trim();
     if (AUTO_REPLY_SUBJECT_PREFIXES.some(p => subj.startsWith(p))) return true;
+    // Check subject for marketing/sales email patterns
+    if (MARKETING_SUBJECT_PATTERNS.some(p => p.test(subj))) return true;
   }
 
   return false;

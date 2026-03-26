@@ -21,6 +21,23 @@ export const IGNORE_SENDER_PATTERNS = [
   '@github.com', '@linkedin.com', '@facebookmail.com',
   '@ipostal1.com', '@mailchimp.com',
   '@sendgrid.net', '@amazonses.com', '@contaboserver.net',
+  // Marketing / sales / cold outreach senders
+  '@hubspot.com', '@hubspotmail.com', '@hs-analytics.net',
+  '@salesforce.com', '@pardot.com',
+  '@constantcontact.com', '@ctctmail.com',
+  '@campaign-archive.com', '@list-manage.com',
+  '@drip.com', '@convertkit.com', '@beehiiv.com',
+  '@substack.com', '@klaviyo.com', '@brevo.com',
+  '@sendinblue.com', '@activecampaign.com',
+  '@smartlead-team.com', '@smartlead.ai',
+  '@lemlist.com', '@woodpecker.co', '@reply.io',
+  '@outreach.io', '@salesloft.com', '@apollo.io',
+  '@zoominfo.com', '@lusha.com', '@seamless.ai',
+  '@intercom.io', '@zendesk.com', '@freshdesk.com',
+  '@shopifyemail.com', '@shopify.com',
+  '@wordfence.com', '@wordpress.com', '@wp.com',
+  '@fubo.tv', '@newsletters.',
+  'productmarketing@', 'growth@',
 ];
 
 // ── Business-relevant keywords (emails without these are skipped) ──
@@ -115,4 +132,22 @@ export const COMPLAINT_PATTERNS: RegExp[] = [
 export const AUTO_REPLY_SUBJECT_PREFIXES = [
   'auto:', 'automatic reply:', 'out of office:',
   'delivery status notification', 'undeliverable:',
+];
+
+// ── Marketing/sales email subject patterns (skip these — not real customers) ──
+export const MARKETING_SUBJECT_PATTERNS: RegExp[] = [
+  /\bunsubscribe\b/i,
+  /\bwebinar\b/i,
+  /\bdemo\s*(request|day|session|slot)\b/i,
+  /\bfree\s*trial\b/i,
+  /\blimited\s*time\s*offer\b/i,
+  /\bexclusive\s*(offer|deal|discount|invitation)\b/i,
+  /\b(don.?t miss|last chance|act now|hurry|expires? (soon|today))\b/i,
+  /\b(grow your|scale your|boost your|10x|100x)\b/i,
+  /\b(cold email|outreach tool|lead gen|sales automation)\b/i,
+  /\b(we help (companies|businesses|teams))\b/i,
+  /\b(quick question|loved your|saw your (post|company|profile))\b/i,
+  /\b(partnership opportunity|collaboration opportunity)\b/i,
+  /\b(roi|revenue growth|pipeline)\b.*\b(guaranteed|proven|results)\b/i,
+  /\bright (person|contact|team)\b.*\bto (talk|chat|connect|discuss)\b/i,
 ];

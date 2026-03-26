@@ -66,11 +66,13 @@ function main() {
       const source = parseFlag(args, '--source');
       const valueCents = parseFlag(args, '--value');
       const notes = parseFlag(args, '--notes');
+      const sourceChannel = parseFlag(args, '--source-channel');
+      const sourceCampaign = parseFlag(args, '--source-campaign');
 
       db.prepare(
-        `INSERT INTO deals (id, contact_id, group_folder, stage, value_cents, source, notes, created_at, updated_at)
-         VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?)`,
-      ).run(id, contactId, group, valueCents ? parseInt(valueCents, 10) : null, source || null, notes || null, now, now);
+        `INSERT INTO deals (id, contact_id, group_folder, stage, value_cents, source, notes, source_channel, source_campaign, created_at, updated_at)
+         VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(id, contactId, group, valueCents ? parseInt(valueCents, 10) : null, source || null, notes || null, sourceChannel || null, sourceCampaign || null, now, now);
 
       // Log initial stage
       db.prepare(

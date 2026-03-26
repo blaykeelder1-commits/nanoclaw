@@ -10,10 +10,13 @@ import {
   ConversionStats,
   Deal,
   DealStageLogEntry,
+  LearningEvent,
+  MessageVariant,
   NewMessage,
   OutreachLog,
   PipelineHealth,
   RegisteredGroup,
+  ResponseMetric,
   ScheduledTask,
   TaskRunLog,
 } from './types.js';
@@ -335,6 +338,10 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Multi-touch attribution — track which channel and campaign sourced each deal
+  try { database.exec(`ALTER TABLE deals ADD COLUMN source_channel TEXT`); } catch { /* exists */ }
+  try { database.exec(`ALTER TABLE deals ADD COLUMN source_campaign TEXT`); } catch { /* exists */ }
+
   // Migrations — add business field to CRM tables for multi-business separation
   const crmMigrations: string[] = [
     `ALTER TABLE contacts ADD COLUMN business TEXT NOT NULL DEFAULT ''`,
@@ -362,6 +369,54 @@ function createSchema(database: Database.Database): void {
       created_at TEXT NOT NULL
     );
   `);
+
+  // ── Adaptive Learning System tables ──────────────────────────────
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS response_metrics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_jid TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      response_time_ms INTEGER NOT NULL,
+      message_length INTEGER NOT NULL,
+      customer_replied INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_response_metrics_group ON response_metrics(group_folder, created_at);
+    CREATE INDEX IF NOT EXISTS idx_response_metrics_jid ON response_metrics(chat_jid, created_at);
+
+    CREATE TABLE IF NOT EXISTS learning_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_type TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      details TEXT NOT NULL,
+      processed INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_learning_events_type ON learning_events(event_type, created_at);
+    CREATE INDEX IF NOT EXISTS idx_learning_events_unprocessed ON learning_events(processed, created_at);
+
+    CREATE TABLE IF NOT EXISTS message_variants (
+      id TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      variant_name TEXT NOT NULL,
+      template TEXT NOT NULL,
+      times_used INTEGER DEFAULT 0,
+      times_converted INTEGER DEFAULT 0,
+      times_replied INTEGER DEFAULT 0,
+      avg_sentiment REAL,
+      status TEXT DEFAULT 'active',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_variants_category ON message_variants(category, status);
+  `);
+
+  // Add attribution column to conversions (migration for existing DBs)
+  try {
+    database.exec(`ALTER TABLE conversions ADD COLUMN attribution TEXT`);
+  } catch { /* column already exists */ }
 }
 
 export function initDatabase(): void {
@@ -1224,6 +1279,19 @@ export function moveDealStage(
       `INSERT INTO deal_stage_log (deal_id, from_stage, to_stage, changed_at, note)
        VALUES (?, ?, ?, ?, ?)`,
     ).run(dealId, deal.stage, toStage, now, note || null);
+
+    // Log learning event for closed deals
+    if (toStage === 'closed_won' || toStage === 'closed_lost') {
+      logLearningEvent({
+        event_type: toStage === 'closed_won' ? 'conversion_won' : 'conversion_lost',
+        group_folder: deal.group_folder,
+        details: JSON.stringify({
+          deal_id: dealId, from_stage: deal.stage,
+          value_cents: deal.value_cents, source: deal.source, note,
+        }),
+        created_at: now,
+      });
+    }
   });
   move();
 }
@@ -1619,6 +1687,21 @@ export function updateComplaintStatus(
       `UPDATE complaints SET resolution_status = ?, resolved_at = COALESCE(?, resolved_at) WHERE id = ?`,
     ).run(status, resolvedAt, id);
   }
+
+  // Log learning event for resolved complaints
+  if (status === 'resolved' || status === 'refunded') {
+    try {
+      const complaint = db.prepare('SELECT * FROM complaints WHERE id = ?').get(id) as { customer_jid: string; category: string; channel: string } | undefined;
+      if (complaint) {
+        logLearningEvent({
+          event_type: 'complaint_resolved',
+          group_folder: '', // complaints don't have group_folder reliably
+          details: JSON.stringify({ complaint_id: id, category: complaint.category, channel: complaint.channel, resolution: status, notes }),
+          created_at: now,
+        });
+      }
+    } catch { /* non-critical */ }
+  }
 }
 
 function mapComplaintRow(row: ComplaintRow) {
@@ -1746,4 +1829,234 @@ function migrateJsonState(): void {
       setRegisteredGroup(jid, group);
     }
   }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Adaptive Learning System — DB Functions
+// ══════════════════════════════════════════════════════════════════
+
+// ── Response Metrics ─────────────────────────────────────────────
+
+export function logResponseMetric(data: ResponseMetric): void {
+  db.prepare(
+    `INSERT INTO response_metrics (chat_jid, channel, group_folder, response_time_ms, message_length, customer_replied, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(data.chat_jid, data.channel, data.group_folder, data.response_time_ms, data.message_length, data.customer_replied ?? 0, data.created_at);
+}
+
+export function getResponseMetricsSummary(groupFolder: string, days: number = 7) {
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+  const rows = db.prepare(
+    `SELECT response_time_ms, message_length, customer_replied, channel
+     FROM response_metrics WHERE group_folder = ? AND created_at >= ?
+     ORDER BY response_time_ms`,
+  ).all(groupFolder, cutoff) as Array<{ response_time_ms: number; message_length: number; customer_replied: number; channel: string }>;
+
+  if (rows.length === 0) return { count: 0, medianResponseMs: 0, avgMessageLength: 0, replyRate: 0, byChannel: {} };
+
+  const mid = Math.floor(rows.length / 2);
+  const totalReplied = rows.filter(r => r.customer_replied).length;
+  const avgLen = rows.reduce((s, r) => s + r.message_length, 0) / rows.length;
+
+  const byChannel: Record<string, { count: number; replyRate: number; medianResponseMs: number }> = {};
+  const channelGroups = new Map<string, typeof rows>();
+  for (const r of rows) {
+    if (!channelGroups.has(r.channel)) channelGroups.set(r.channel, []);
+    channelGroups.get(r.channel)!.push(r);
+  }
+  for (const [ch, chRows] of channelGroups) {
+    const chMid = Math.floor(chRows.length / 2);
+    byChannel[ch] = {
+      count: chRows.length,
+      replyRate: chRows.filter(r => r.customer_replied).length / chRows.length,
+      medianResponseMs: chRows[chMid]?.response_time_ms ?? 0,
+    };
+  }
+
+  return {
+    count: rows.length,
+    medianResponseMs: rows[mid]?.response_time_ms ?? 0,
+    avgMessageLength: Math.round(avgLen),
+    replyRate: totalReplied / rows.length,
+    byChannel,
+  };
+}
+
+/** Mark that a customer replied to a bot message for a given JID. */
+export function markCustomerReplied(chatJid: string): void {
+  // Update the most recent unconfirmed metric for this JID
+  db.prepare(
+    `UPDATE response_metrics SET customer_replied = 1
+     WHERE id = (SELECT id FROM response_metrics WHERE chat_jid = ? AND customer_replied = 0 ORDER BY created_at DESC LIMIT 1)`,
+  ).run(chatJid);
+}
+
+// ── Learning Events ──────────────────────────────────────────────
+
+export function logLearningEvent(data: Pick<LearningEvent, 'event_type' | 'group_folder' | 'details' | 'created_at'>): void {
+  db.prepare(
+    `INSERT INTO learning_events (event_type, group_folder, details, processed, created_at)
+     VALUES (?, ?, ?, 0, ?)`,
+  ).run(data.event_type, data.group_folder, data.details, data.created_at || new Date().toISOString());
+}
+
+export function getUnprocessedLearningEvents(limit: number = 500) {
+  return db.prepare(
+    `SELECT * FROM learning_events WHERE processed = 0 ORDER BY created_at ASC LIMIT ?`,
+  ).all(limit) as Array<LearningEvent & { id: number }>;
+}
+
+export function markLearningEventsProcessed(ids: number[]): void {
+  if (ids.length === 0) return;
+  const placeholders = ids.map(() => '?').join(',');
+  db.prepare(
+    `UPDATE learning_events SET processed = 1 WHERE id IN (${placeholders})`,
+  ).run(...ids);
+}
+
+export function getLearningEventCounts(days: number = 7) {
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+  return db.prepare(
+    `SELECT event_type, COUNT(*) as count FROM learning_events WHERE created_at >= ? GROUP BY event_type`,
+  ).all(cutoff) as Array<{ event_type: string; count: number }>;
+}
+
+// ── Message Variants (A/B Testing) ──────────────────────────────
+
+export function getVariantsByCategory(category: string): MessageVariant[] {
+  return db.prepare(
+    `SELECT * FROM message_variants WHERE category = ? AND status = 'active' ORDER BY times_used ASC`,
+  ).all(category) as MessageVariant[];
+}
+
+export function getAllVariants(): MessageVariant[] {
+  return db.prepare(
+    `SELECT * FROM message_variants ORDER BY category, status, times_used DESC`,
+  ).all() as MessageVariant[];
+}
+
+export function upsertVariant(variant: Omit<MessageVariant, 'times_used' | 'times_converted' | 'times_replied' | 'avg_sentiment'>): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO message_variants (id, category, variant_name, template, times_used, times_converted, times_replied, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 0, 0, 0, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET template = excluded.template, updated_at = excluded.updated_at`,
+  ).run(variant.id, variant.category, variant.variant_name, variant.template, variant.status || 'active', variant.created_at || now, now);
+}
+
+export function recordVariantUsage(variantId: string, converted: boolean, replied: boolean): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE message_variants SET
+      times_used = times_used + 1,
+      times_converted = times_converted + ?,
+      times_replied = times_replied + ?,
+      updated_at = ?
+     WHERE id = ?`,
+  ).run(converted ? 1 : 0, replied ? 1 : 0, now, variantId);
+}
+
+export function graduateVariant(winnerId: string, category: string): void {
+  const now = new Date().toISOString();
+  db.transaction(() => {
+    // Retire all other active variants in this category
+    db.prepare(
+      `UPDATE message_variants SET status = 'retired', updated_at = ? WHERE category = ? AND id != ? AND status = 'active'`,
+    ).run(now, category, winnerId);
+    // Mark the winner
+    db.prepare(
+      `UPDATE message_variants SET status = 'winner', updated_at = ? WHERE id = ?`,
+    ).run(now, winnerId);
+  })();
+}
+
+// ── Revenue & Dashboard Aggregation ─────────────────────────────
+
+export function getRevenueByChannel(days: number = 30) {
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+  return db.prepare(
+    `SELECT channel, COUNT(*) as count, COALESCE(SUM(value_usd), 0) as total_usd
+     FROM conversions WHERE stage IN ('booked', 'completed', 'reviewed') AND created_at >= ?
+     GROUP BY channel`,
+  ).all(cutoff) as Array<{ channel: string; count: number; total_usd: number }>;
+}
+
+export function getRevenueByBusiness(days: number = 30) {
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+  return db.prepare(
+    `SELECT business, COUNT(*) as count, COALESCE(SUM(value_usd), 0) as total_usd
+     FROM conversions WHERE stage IN ('booked', 'completed', 'reviewed') AND created_at >= ?
+     GROUP BY business`,
+  ).all(cutoff) as Array<{ business: string; count: number; total_usd: number }>;
+}
+
+export function getCostPerConversion(days: number = 30) {
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+  const conversions = db.prepare(
+    `SELECT COUNT(*) as count FROM conversions WHERE stage IN ('booked', 'completed', 'reviewed') AND created_at >= ?`,
+  ).get(cutoff) as { count: number };
+
+  const usage = db.prepare(
+    `SELECT COALESCE(SUM(
+      CASE
+        WHEN model LIKE '%haiku%' THEN (input_tokens * 0.80 + output_tokens * 4.00) / 1000000.0
+        WHEN model LIKE '%sonnet%' THEN (input_tokens * 3.00 + output_tokens * 15.00) / 1000000.0
+        WHEN model LIKE '%opus%' THEN (input_tokens * 15.00 + output_tokens * 75.00) / 1000000.0
+        ELSE (input_tokens * 3.00 + output_tokens * 15.00) / 1000000.0
+      END
+    ), 0) as total_cost FROM usage_log WHERE timestamp >= ?`,
+  ).get(cutoff) as { total_cost: number };
+
+  return {
+    totalCostUsd: Math.round(usage.total_cost * 100) / 100,
+    totalConversions: conversions.count,
+    costPerConversion: conversions.count > 0 ? Math.round((usage.total_cost / conversions.count) * 100) / 100 : 0,
+  };
+}
+
+export function getFunnelSnapshot(groupFolder?: string) {
+  const where = groupFolder ? 'WHERE group_folder = ?' : '';
+  const params = groupFolder ? [groupFolder] : [];
+  return db.prepare(
+    `SELECT stage, COUNT(*) as count, COALESCE(SUM(value_cents), 0) as total_cents
+     FROM deals ${where} GROUP BY stage ORDER BY
+     CASE stage WHEN 'new' THEN 1 WHEN 'qualified' THEN 2 WHEN 'appointment_booked' THEN 3
+       WHEN 'proposal' THEN 4 WHEN 'closed_won' THEN 5 WHEN 'closed_lost' THEN 6 END`,
+  ).all(...params) as Array<{ stage: string; count: number; total_cents: number }>;
+}
+
+export function getExperimentStatus() {
+  return db.prepare(
+    `SELECT category, variant_name, times_used, times_converted, times_replied, status,
+     CASE WHEN times_used > 0 THEN ROUND(CAST(times_converted AS REAL) / times_used * 100, 1) ELSE 0 END as conversion_pct,
+     CASE WHEN times_used > 0 THEN ROUND(CAST(times_replied AS REAL) / times_used * 100, 1) ELSE 0 END as reply_pct
+     FROM message_variants WHERE status = 'active' ORDER BY category, conversion_pct DESC`,
+  ).all() as Array<{ category: string; variant_name: string; times_used: number; times_converted: number; times_replied: number; status: string; conversion_pct: number; reply_pct: number }>;
+}
+
+/** Get task failure streaks for self-healing detection */
+export function getTaskFailureStreaks(minStreak: number = 3) {
+  // Find tasks where the last N runs were all errors
+  const tasks = db.prepare(
+    `SELECT DISTINCT task_id FROM task_run_logs WHERE status = 'error'
+     AND run_at >= datetime('now', '-7 days')
+     GROUP BY task_id HAVING COUNT(*) >= ?`,
+  ).all(minStreak) as Array<{ task_id: string }>;
+
+  const streaks: Array<{ task_id: string; consecutive_failures: number; last_error: string }> = [];
+  for (const { task_id } of tasks) {
+    const recent = db.prepare(
+      `SELECT status, error FROM task_run_logs WHERE task_id = ? ORDER BY run_at DESC LIMIT ?`,
+    ).all(task_id, minStreak + 2) as Array<{ status: string; error: string | null }>;
+
+    let streak = 0;
+    for (const r of recent) {
+      if (r.status === 'error') streak++;
+      else break;
+    }
+    if (streak >= minStreak) {
+      streaks.push({ task_id, consecutive_failures: streak, last_error: recent[0]?.error || 'unknown' });
+    }
+  }
+  return streaks;
 }
