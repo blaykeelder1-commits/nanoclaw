@@ -18,6 +18,7 @@
 import fs from 'fs';
 import path from 'path';
 import { google } from 'googleapis';
+import { resolveGroupDir } from '../shared/group-path.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -89,7 +90,7 @@ async function readSheet(range: string): Promise<string[][]> {
 // Product Name Normalization (matches reconcile.ts)
 // ---------------------------------------------------------------------------
 
-const ALIAS_FILE = path.join(process.cwd(), 'groups', 'snak-group', 'product-aliases.json');
+const ALIAS_FILE = path.join(resolveGroupDir(), 'product-aliases.json');
 
 function loadAliases(): Record<string, string> {
   if (fs.existsSync(ALIAS_FILE)) {
@@ -416,7 +417,7 @@ async function main() {
   }
 
   const windowSize = parseInt(parseFlag(args, '--weeks', '4')!, 10);
-  const defaultOutput = path.join(process.cwd(), 'groups', 'snak-group', 'demand-forecast.json');
+  const defaultOutput = path.join(resolveGroupDir(), 'demand-forecast.json');
   const outputPath = parseFlag(args, '--output', defaultOutput)!;
 
   try {

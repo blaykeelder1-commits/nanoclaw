@@ -13,6 +13,7 @@
 
 import Database from 'better-sqlite3';
 import { getDbPath } from '../shared/db-path.js';
+import { resolveGroupDir } from '../shared/group-path.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -174,8 +175,7 @@ function analyzeGroup(db: Database.Database, groupFolder: string, now: Date): Pe
   const lastInteractionMap = new Map(lastInteractions.map(r => [r.contact_id, r.last_sent]));
 
   // 6. Load previous report for trend detection
-  const projectRoot = path.resolve(getDbPath(), '..', '..');
-  const reportDir = path.join(projectRoot, 'groups', groupFolder);
+  const reportDir = resolveGroupDir(groupFolder);
   const reportPath = path.join(reportDir, 'location-performance.json');
 
   let previousLocations: LocationEntry[] = [];
@@ -358,8 +358,7 @@ function analyzeGroup(db: Database.Database, groupFolder: string, now: Date): Pe
 // ---------------------------------------------------------------------------
 
 function writeReport(report: PerformanceReport, groupFolder: string): string {
-  const projectRoot = path.resolve(getDbPath(), '..', '..');
-  const reportDir = path.join(projectRoot, 'groups', groupFolder);
+  const reportDir = resolveGroupDir(groupFolder);
 
   if (!fs.existsSync(reportDir)) {
     fs.mkdirSync(reportDir, { recursive: true });

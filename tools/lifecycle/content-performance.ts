@@ -12,6 +12,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { resolveGroupDir } from '../shared/group-path.js';
 
 interface PerformanceTemplate {
   generated_at: string;
@@ -109,14 +110,15 @@ function extractPatterns(patternsContent: string): string[] {
 }
 
 function processGroup(root: string, folder: string): { written: boolean; stale: boolean } {
-  const groupDir = path.join(root, 'groups', folder);
+  const groupDir = resolveGroupDir(folder);
   if (!fs.existsSync(groupDir)) {
     console.error(`[content-performance] Group directory not found: ${folder}`);
     return { written: false, stale: false };
   }
 
   const calendarPath = path.join(groupDir, 'content-calendar.md');
-  const patternsPath = path.join(root, 'groups', 'main', 'viral-patterns.md');
+  const mainDir = resolveGroupDir('main');
+  const patternsPath = path.join(mainDir, 'viral-patterns.md');
   const outputPath = path.join(groupDir, 'content-performance.json');
 
   // Check for stale existing data

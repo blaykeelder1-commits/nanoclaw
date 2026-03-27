@@ -10,6 +10,7 @@
 
 import Database from 'better-sqlite3';
 import { getDbPath } from '../shared/db-path.js';
+import { resolveGroupDir } from '../shared/group-path.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -440,7 +441,7 @@ function generateForGroup(db: Database.Database, folder: string, groupsDir: stri
   lines.push('');
 
   // Write the file
-  const outDir = path.join(groupsDir, folder);
+  const outDir = resolveGroupDir(folder);
   if (!fs.existsSync(outDir)) {
     fs.mkdirSync(outDir, { recursive: true });
   }

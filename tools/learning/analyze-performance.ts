@@ -14,6 +14,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import { getDbPath } from '../shared/db-path.js';
+import { resolveGroupDir } from '../shared/group-path.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -184,7 +185,7 @@ function safeGet<T = Record<string, unknown>>(db: Database.Database, table: stri
 }
 
 // ---------------------------------------------------------------------------
-// Project root resolution
+// Project root resolution (kept for --all-groups group-discovery fallback)
 // ---------------------------------------------------------------------------
 
 function getProjectRoot(): string {
@@ -604,7 +605,8 @@ function generateRecommendations(insights: PerformanceInsights): string[] {
 // ---------------------------------------------------------------------------
 
 function appendLessons(projectRoot: string, folder: string, insights: PerformanceInsights, graduatedInsights: string[], learningPatterns: string[]) {
-  const lessonsPath = path.join(projectRoot, 'groups', folder, 'lessons.md');
+  const groupDir = resolveGroupDir(folder);
+  const lessonsPath = path.join(groupDir, 'lessons.md');
   let existingContent = '';
   if (fs.existsSync(lessonsPath)) {
     existingContent = fs.readFileSync(lessonsPath, 'utf-8');
@@ -788,7 +790,7 @@ function analyzeGroup(db: Database.Database, folder: string, projectRoot: string
   }
 
   // Write performance-insights.json
-  const groupDir = path.join(projectRoot, 'groups', folder);
+  const groupDir = resolveGroupDir(folder);
   if (!fs.existsSync(groupDir)) {
     console.log(`  Group directory not found: ${groupDir}, skipping file writes.`);
     return;

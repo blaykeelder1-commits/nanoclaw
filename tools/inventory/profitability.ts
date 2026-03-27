@@ -18,6 +18,7 @@
 import fs from 'fs';
 import path from 'path';
 import { google } from 'googleapis';
+import { resolveGroupDir } from '../shared/group-path.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -106,7 +107,7 @@ async function readSheet(range: string): Promise<string[][]> {
 // Product Name Normalization (matches reconcile.ts)
 // ---------------------------------------------------------------------------
 
-const ALIAS_FILE = path.join(process.cwd(), 'groups', 'snak-group', 'product-aliases.json');
+const ALIAS_FILE = path.join(resolveGroupDir(), 'product-aliases.json');
 
 function loadAliases(): Record<string, string> {
   if (fs.existsSync(ALIAS_FILE)) {
@@ -203,7 +204,7 @@ function resolveUnitCost(entry: CostEntry): number | null {
 // ---------------------------------------------------------------------------
 
 function loadDemandForecast(): DemandForecast | null {
-  const forecastPath = path.join(process.cwd(), 'groups', 'snak-group', 'demand-forecast.json');
+  const forecastPath = path.join(resolveGroupDir(), 'demand-forecast.json');
   if (!fs.existsSync(forecastPath)) return null;
   try {
     return JSON.parse(fs.readFileSync(forecastPath, 'utf-8'));
@@ -488,7 +489,7 @@ async function cmdAnalyze(): Promise<void> {
   };
 
   // Write output file
-  const outputPath = path.join(process.cwd(), 'groups', 'snak-group', 'profitability.json');
+  const outputPath = path.join(resolveGroupDir(), 'profitability.json');
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, JSON.stringify(result, null, 2));
 
@@ -507,7 +508,7 @@ async function cmdAnalyze(): Promise<void> {
 }
 
 async function cmdSummary(): Promise<void> {
-  const outputPath = path.join(process.cwd(), 'groups', 'snak-group', 'profitability.json');
+  const outputPath = path.join(resolveGroupDir(), 'profitability.json');
 
   if (!fs.existsSync(outputPath)) {
     // Generate fresh if no file exists

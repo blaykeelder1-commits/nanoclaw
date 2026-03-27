@@ -22,6 +22,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { resolveGroupDir } from '../shared/group-path.js';
 
 const BASE_URL = process.env.IDDI_BASE_URL;
 const BACKEND_URL = process.env.IDDI_BACKEND_URL;
@@ -47,11 +48,8 @@ async function fetchRetry(url: string, init?: RequestInit, retries = MAX_RETRIES
 const EMAIL = process.env.IDDI_EMAIL;
 const PASSWORD = process.env.IDDI_PASSWORD;
 
-// Token cache location — works both on host and inside containers.
-// Container: /workspace/group/ exists. Host: cwd/groups/snak-group/ exists.
-const TOKEN_FILE = fs.existsSync('/workspace/group')
-  ? '/workspace/group/iddi-token.json'
-  : path.join(process.cwd(), 'groups', 'snak-group', 'iddi-token.json');
+// Token cache location — resolves correctly in all execution contexts.
+const TOKEN_FILE = path.join(resolveGroupDir(), 'iddi-token.json');
 
 interface TokenCache {
   token: string;
@@ -135,9 +133,7 @@ function parseFlag(args: string[], flag: string, defaultVal?: string): string | 
 
 // --- IDDI Backend (Render-hosted) helpers ---
 
-const BACKEND_TOKEN_FILE = fs.existsSync('/workspace/group')
-  ? '/workspace/group/iddi-backend-token.json'
-  : path.join(process.cwd(), 'groups', 'snak-group', 'iddi-backend-token.json');
+const BACKEND_TOKEN_FILE = path.join(resolveGroupDir(), 'iddi-backend-token.json');
 
 const BACKEND_WAKE_TIMEOUT_MS = 45_000;
 

@@ -23,7 +23,13 @@ Weekly automation (runs every Friday at 7pm Central):
 3. **COMBINE PLATFORMS:** Merge sales from HahaVending + Vendera into unified per-product totals. Show platform breakdown in the report but totals should be combined.
 4. **ALL MACHINES:** Account for every machine across both platforms. List all reporting machines in the report.
 5. **NO INTERNAL TAGS:** Never wrap your final output in `<internal>` tags. The report must be delivered to the user via `send_message`.
-6. **NO PARTIAL REPORTS:** Do NOT send a report unless you have sales data from BOTH HahaVending and Vendera. If one platform fails, retry it (up to 3 attempts). If both fail after retries, send an error message requesting manual intervention — never send a report with only IDDI data.
+6. **PARTIAL REPORTS ALLOWED:** Try BOTH platforms (up to 3 retries each). If one succeeds and the other fails:
+   - Send the report with the data you DO have
+   - Clearly label which platform's data is included and which failed
+   - Add a warning line: "⚠️ [Platform] was unavailable — data from [Other Platform] only. Totals may be incomplete."
+   - Still run reconciliation and demand forecast with available data
+   - If BOTH platforms fail after retries, send an error message requesting manual intervention
+   - Never send a report with only IDDI data and no platform sales data
 
 ## Credentials
 
@@ -298,6 +304,12 @@ This pulls IDDI data + the freshly-updated Sheets data, builds a unified view, a
 *COMING OFF BLACKLIST SOON:*
 • [Product] — blacklisted [date], eligible to retry [date]
 
+*MACHINE PERFORMANCE:*
+• Machines reporting: [X] HahaVending / [X] Vendera
+• Top machine: [Machine Name] — $[X] revenue
+• Zero-sales machines: [list any machines with $0 this week — potential issue]
+• Smart coolers: [X] units / $[X] revenue (if trackable separately)
+
 *SALES HIGHLIGHTS:*
 • Top seller: [Product] — [X] units
 • Total units sold: [X]
@@ -314,9 +326,11 @@ Follow this exact sequence:
 2. Read Google Sheets (all 3 tabs) — understand current state
 3. Login to HahaVending — pull weekly sales (retry up to 3x if needed)
 4. Login to Vendera — pull weekly sales (retry up to 3x if needed)
-5. If BOTH platforms succeeded: combine data, update sheets
+5. If at least ONE platform succeeded: combine available data, update sheets
 6. Run reconciliation: `npx tsx /workspace/project/tools/inventory/reconcile.ts full --yo-offset 2`
 7. Run demand forecast: `npx tsx /workspace/project/tools/inventory/demand-forecast.ts generate`
 8. Run trend alerts: `npx tsx /workspace/project/tools/inventory/trend-alerts.ts check`
-9. Generate and send ONE WhatsApp message with complete report (include trending up/down highlights from forecast + any critical/warning alerts from trend-alerts)
-10. If EITHER platform failed after 3 retries: send error message, do NOT send partial report
+9. **Capture per-machine data** — When scraping sales, also note which machines reported and their individual revenue. Include machine names and per-machine totals for the report.
+10. Generate and send ONE WhatsApp message with complete report (include trending up/down highlights from forecast + any critical/warning alerts from trend-alerts + machine performance section)
+11. If one platform failed: include data from the successful platform, add warning note about the failed platform
+12. If BOTH platforms failed after 3 retries: send error message requesting manual intervention

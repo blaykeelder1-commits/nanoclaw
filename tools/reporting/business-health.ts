@@ -19,6 +19,7 @@ import fs from 'fs';
 import path from 'path';
 import { google } from 'googleapis';
 import Database from 'better-sqlite3';
+import { resolveGroupDir } from '../shared/group-path.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -206,7 +207,7 @@ async function calculateInventoryHealth(): Promise<ScoreDetail> {
   }
 
   // Check blacklist state
-  const blacklistPath = path.join(process.cwd(), 'groups', 'snak-group', 'blacklist-state.json');
+  const blacklistPath = path.join(resolveGroupDir(), 'blacklist-state.json');
   let blacklistedCount = 0;
   if (fs.existsSync(blacklistPath)) {
     try {
@@ -304,7 +305,7 @@ function calculatePipelineHealth(): ScoreDetail {
 // ---------------------------------------------------------------------------
 
 function calculateProductPerformance(): ScoreDetail {
-  const forecastPath = path.join(process.cwd(), 'groups', 'snak-group', 'demand-forecast.json');
+  const forecastPath = path.join(resolveGroupDir(), 'demand-forecast.json');
 
   if (!fs.existsSync(forecastPath)) {
     return { score: 50, weight: 0.20, detail: 'No demand forecast data available' };
@@ -433,7 +434,7 @@ async function main() {
     process.exit(1);
   }
 
-  const defaultOutput = path.join(process.cwd(), 'groups', 'snak-group', 'business-health.json');
+  const defaultOutput = path.join(resolveGroupDir(), 'business-health.json');
   const outputPath = parseFlag(args, '--output', defaultOutput)!;
 
   try {

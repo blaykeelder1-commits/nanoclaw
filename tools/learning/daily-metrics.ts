@@ -14,6 +14,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import { getDbPath } from '../shared/db-path.js';
+import { resolveGroupDir } from '../shared/group-path.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -297,7 +298,7 @@ function main() {
       console.log(`\n  Processing ${folder}...`);
       const metrics = computeMetrics(db, folder);
 
-      const groupDir = path.join(projectRoot, 'groups', folder);
+      const groupDir = resolveGroupDir(folder);
       if (!fs.existsSync(groupDir)) {
         console.log(`  Group directory not found: ${groupDir}, skipping.`);
         continue;

@@ -20,6 +20,7 @@
 import fs from 'fs';
 import path from 'path';
 import { google } from 'googleapis';
+import { resolveGroupDir } from '../shared/group-path.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -87,7 +88,7 @@ interface SummaryStats {
 const IDDI_BASE = process.env.IDDI_BASE_URL;
 const IDDI_EMAIL = process.env.IDDI_EMAIL;
 const IDDI_PASSWORD = process.env.IDDI_PASSWORD;
-const TOKEN_FILE = path.join(process.cwd(), 'groups', 'snak-group', 'iddi-token.json');
+const TOKEN_FILE = path.join(resolveGroupDir(), 'iddi-token.json');
 
 async function getIddiToken(): Promise<string> {
   if (fs.existsSync(TOKEN_FILE)) {
@@ -151,7 +152,7 @@ async function readSheet(range: string): Promise<string[][]> {
 // Product Name Normalization & Fuzzy Matching
 // ---------------------------------------------------------------------------
 
-const ALIAS_FILE = path.join(process.cwd(), 'groups', 'snak-group', 'product-aliases.json');
+const ALIAS_FILE = path.join(resolveGroupDir(), 'product-aliases.json');
 
 function loadAliases(): Record<string, string> {
   if (fs.existsSync(ALIAS_FILE)) {
@@ -219,7 +220,7 @@ function parseColor(raw: string | undefined): SalesColor {
 // Blacklist State
 // ---------------------------------------------------------------------------
 
-const BLACKLIST_FILE = path.join(process.cwd(), 'groups', 'snak-group', 'blacklist-state.json');
+const BLACKLIST_FILE = path.join(resolveGroupDir(), 'blacklist-state.json');
 const BLACKLIST_MONTHS = 3;
 
 function loadBlacklistState(): BlacklistEntry[] {

@@ -18,6 +18,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { resolveGroupDir } from '../shared/group-path.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -96,8 +97,8 @@ interface AlertCounts {
 // Paths
 // ---------------------------------------------------------------------------
 
-const FORECAST_PATH = path.join(process.cwd(), 'groups', 'snak-group', 'demand-forecast.json');
-const HISTORY_PATH = path.join(process.cwd(), 'groups', 'snak-group', 'trend-alerts-history.json');
+const FORECAST_PATH = path.join(resolveGroupDir(), 'demand-forecast.json');
+const HISTORY_PATH = path.join(resolveGroupDir(), 'trend-alerts-history.json');
 
 // ---------------------------------------------------------------------------
 // Helpers
