@@ -108,7 +108,13 @@ setInterval(() => {
 // ── Handlers ────────────────────────────────────────────────────────
 
 async function handleAvailability(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const body = JSON.parse(await readBody(req)) as AvailabilityRequest;
+  let body: AvailabilityRequest;
+  try {
+    body = JSON.parse(await readBody(req)) as AvailabilityRequest;
+  } catch {
+    json(res, 400, { error: 'Invalid JSON' });
+    return;
+  }
 
   if (!body.equipment || !EQUIPMENT[body.equipment]) {
     json(res, 400, { error: 'Invalid equipment type' });
@@ -135,7 +141,13 @@ async function handleAvailability(req: http.IncomingMessage, res: http.ServerRes
 }
 
 async function handleCheckout(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const body = JSON.parse(await readBody(req)) as CheckoutRequest;
+  let body: CheckoutRequest;
+  try {
+    body = JSON.parse(await readBody(req)) as CheckoutRequest;
+  } catch {
+    json(res, 400, { error: 'Invalid JSON' });
+    return;
+  }
 
   // Validate
   if (!body.equipment || !EQUIPMENT[body.equipment]) {
@@ -145,6 +157,18 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
   if (!body.dates || body.dates.length === 0) {
     json(res, 400, { error: 'No dates selected' });
     return;
+  }
+  // Validate date format and reject past dates
+  const today = new Date().toISOString().split('T')[0];
+  for (const d of body.dates) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      json(res, 400, { error: 'Invalid date format. Use YYYY-MM-DD.' });
+      return;
+    }
+    if (d < today) {
+      json(res, 400, { error: 'Cannot book dates in the past.' });
+      return;
+    }
   }
   if (!body.customer?.firstName || !body.customer?.lastName) {
     json(res, 400, { error: 'Customer name required' });
@@ -335,7 +359,13 @@ async function handleSquareWebhook(req: http.IncomingMessage, res: http.ServerRe
 }
 
 async function handleCancel(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const body = JSON.parse(await readBody(req));
+  let body: any;
+  try {
+    body = JSON.parse(await readBody(req));
+  } catch {
+    json(res, 400, { error: 'Invalid JSON' });
+    return;
+  }
   const { bookingId, refund } = body as { bookingId: string; refund?: boolean };
 
   if (!bookingId) {
@@ -357,7 +387,7 @@ async function handleCancel(req: http.IncomingMessage, res: http.ServerResponse)
   let refundResult = null;
 
   // Process refund if booking was paid/confirmed and refund requested
-  if (refund !== false && booking.status === 'confirmed' && booking.squareOrderId) {
+  if (refund !== false && (booking.status === 'confirmed' || booking.status === 'paid') && booking.squareOrderId) {
     try {
       refundResult = await refundPayment(booking.squareOrderId);
     } catch (err: any) {

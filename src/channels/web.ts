@@ -188,14 +188,15 @@ export class WebChannel implements Channel {
           res.writeHead(200, {
             'Content-Type': mimeTypes[ext] || 'application/octet-stream',
             'Access-Control-Allow-Origin': allowedOrigin,
+            'Cache-Control': 'no-cache, must-revalidate',
           });
           fs.createReadStream(fullPath).pipe(res);
           return;
         }
       }
 
-      res.writeHead(200);
-      res.end('ok');
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not found');
     });
 
     this.io = new SocketIOServer(this.server, {

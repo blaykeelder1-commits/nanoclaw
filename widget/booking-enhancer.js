@@ -26,7 +26,7 @@
   };
 
   var ADD_ONS = {
-    generator: { key: 'generator', label: 'Generator', rate: 100, unit: 'night', appliesTo: ['rv'] },
+    generator: { key: 'generator', label: 'Generator', rate: 75, unit: 'night', appliesTo: ['rv'] },
     delivery: { key: 'delivery', label: 'Delivery (within 60mi of Tomball)', rate: 250, unit: 'flat', appliesTo: ['rv'] },
   };
 
@@ -48,7 +48,7 @@
       landscapePrice: '$50/day',
       addOnsTitle: 'Add-Ons',
       generator: 'Generator',
-      generatorDesc: '$100/night (includes 5 gal gas)',
+      generatorDesc: '$75/night (includes 5 gal gas)',
       delivery: 'Delivery',
       deliveryDesc: '$250 flat (pickup + dropoff within 60mi of Tomball)',
       selectDates: 'Select your dates on the calendar',
@@ -89,7 +89,7 @@
       landscapePrice: '$50/día',
       addOnsTitle: 'Extras',
       generator: 'Generador',
-      generatorDesc: '$100/noche (incluye 5 gal de gas)',
+      generatorDesc: '$75/noche (incluye 5 gal de gas)',
       delivery: 'Entrega',
       deliveryDesc: '$250 fijo (recogida + entrega dentro de 60mi de Tomball)',
       selectDates: 'Selecciona tus fechas en el calendario',
@@ -559,11 +559,11 @@
     // Clear old booked-date markings from previous equipment
     clearBookedDateMarkers();
 
-    // Fetch 2 months of availability
+    // Fetch 6 months of availability
     var now = new Date();
     var startDate = now.toISOString().split('T')[0];
     var end = new Date(now);
-    end.setMonth(end.getMonth() + 2);
+    end.setMonth(end.getMonth() + 6);
     var endDate = end.toISOString().split('T')[0];
 
     fetch(API_URL + '/api/availability', {
@@ -640,6 +640,46 @@
       } else {
         td.classList.remove('sr-date-booked');
       }
+    });
+  }
+
+  function unlockFutureDates() {
+    // Override WPBC's "days before booking" restriction — re-enable today and
+    // future dates that WPBC grayed out, while respecting our own availability.
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    var cells = document.querySelectorAll('.datepick-days-cell');
+    cells.forEach(function(td) {
+      // Skip dates we've blocked from our availability API
+      if (td.classList.contains('sr-date-booked')) return;
+      // Skip other-month placeholder cells
+      if (td.classList.contains('datepick-other-month')) return;
+
+      var sqlMatch = td.className.match(/sql_date_(\S+)/);
+      if (!sqlMatch) return;
+      var dateStr = sqlMatch[1];
+
+      // Parse the date
+      var parts = dateStr.split('-');
+      if (parts.length !== 3) return;
+      var cellDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+
+      // Only unlock today and future dates
+      if (cellDate < today) return;
+
+      // If WPBC disabled this cell (span instead of clickable link), re-enable it
+      var span = td.querySelector('span:not(.sr-booked-span)');
+      if (!span) return;
+
+      var a = document.createElement('a');
+      a.className = span.className;
+      a.textContent = span.textContent;
+      a.href = '#';
+      span.parentNode.replaceChild(a, span);
+
+      // Remove WPBC's unselectable class so styling updates
+      td.classList.remove('wpbc_calendar_booking_unselectable');
     });
   }
 
@@ -730,6 +770,9 @@
     setInterval(function () {
       // Reapply booked-date markers (handles month navigation in WPBC)
       applyAvailabilityToCalendar();
+
+      // Re-enable future dates that WPBC's "days before" setting disabled
+      unlockFutureDates();
 
       // Block clicks on booked dates
       blockBookedDateClicks();
