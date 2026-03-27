@@ -3,7 +3,7 @@
  * Replaces IGNORE_PATTERNS in gmail.ts and the isAutoResponse() function.
  * Only active for email channel by default (SMS/Messenger don't have these issues).
  */
-import { IGNORE_SENDER_PATTERNS, AUTO_REPLY_SUBJECT_PREFIXES, MARKETING_SUBJECT_PATTERNS } from '../../filters.js';
+import { IGNORE_SENDER_PATTERNS, AUTO_REPLY_SUBJECT_PREFIXES, MARKETING_SUBJECT_PATTERNS, AUTOMATED_BODY_PATTERNS, AUTOMATED_SUBJECT_PATTERNS } from '../../filters.js';
 import { logger } from '../../logger.js';
 import { InboundStage, InboundMessage, StageVerdict } from '../types.js';
 
@@ -20,6 +20,24 @@ export class SenderFilter implements InboundStage {
       if (IGNORE_SENDER_PATTERNS.some(p => lower.includes(p))) {
         logger.debug({ from: msg.sender, channel: msg.channel }, 'Blocked by sender pattern');
         return { action: 'reject', reason: `sender pattern: ${msg.sender}` };
+      }
+    }
+
+    // Check subject for automated/service patterns (email only)
+    if (this.filteredChannels.has(msg.channel) && msg.subject) {
+      const subject = msg.subject;
+      if (AUTOMATED_SUBJECT_PATTERNS.some(p => p.test(subject))) {
+        logger.info({ from: msg.sender, subject }, 'Blocked automated subject pattern');
+        return { action: 'reject', reason: `automated subject: ${msg.subject}` };
+      }
+    }
+
+    // Check body for automated message indicators (email only)
+    if (this.filteredChannels.has(msg.channel) && msg.content) {
+      const bodySnippet = msg.content.slice(0, 1000);
+      if (AUTOMATED_BODY_PATTERNS.some(p => p.test(bodySnippet))) {
+        logger.info({ from: msg.sender, subject: msg.subject }, 'Blocked automated body pattern');
+        return { action: 'reject', reason: 'automated body pattern detected' };
       }
     }
 

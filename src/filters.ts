@@ -38,6 +38,29 @@ export const IGNORE_SENDER_PATTERNS = [
   '@wordfence.com', '@wordpress.com', '@wp.com',
   '@fubo.tv', '@newsletters.',
   'productmarketing@', 'growth@',
+  // Service providers (variant domains)
+  '@canva.com', '@engage.canva.com', '@mail.canva.com',
+  '@ipostal.com', '@mail.ipostal1.com',
+  '@contabo.com', '@contabo.de',
+  '@em1.cloudflare.com', '@notify.cloudflare.com',
+  '@tawk.to',
+  '@10web.io',
+  '@link.com', '@e.link.com',
+  '@postcardmania.com',
+  '@onlinejobs.ph',
+  '@newsletters.fubo.tv',
+  '@chevronmobileapp.com',
+  // Payment/billing (we use Square, these are just receipts)
+  '@messaging.squareup.com', '@invoicing.squareup.com',
+  '@paypal.com', '@news.paypal.com', '@mail.paypal.com',
+  '@stripe.com',
+  // Broad patterns that catch most service emails
+  '@mail.', '@email.', '@e.', '@em.', '@em1.',
+  '@engage.', '@updates.', '@info.', '@news.',
+  '@accounts.', '@security.', '@verify.',
+  'dmarc@', 'dmarcreport@', 'dmarc-report@',
+  'abuse@', 'compliance@', 'security@',
+  'feedback@', 'system@', 'admin@', 'webmaster@',
 ];
 
 // ── Business-relevant keywords (emails without these are skipped) ──
@@ -150,4 +173,42 @@ export const MARKETING_SUBJECT_PATTERNS: RegExp[] = [
   /\b(partnership opportunity|collaboration opportunity)\b/i,
   /\b(roi|revenue growth|pipeline)\b.*\b(guaranteed|proven|results)\b/i,
   /\bright (person|contact|team)\b.*\bto (talk|chat|connect|discuss)\b/i,
+];
+
+// ── Automated body patterns (detect automated messages even from unknown senders) ──
+export const AUTOMATED_BODY_PATTERNS: RegExp[] = [
+  /this is an automated (message|email|notification)/i,
+  /do not reply to this (message|email)/i,
+  /please do not reply/i,
+  /this (message|email) was (sent|generated) automatically/i,
+  /you('re| are) receiving this (because|email because)/i,
+  /this is a (system|service|automated) (notification|alert|message)/i,
+  /no-?reply/i,
+  /unsubscribe from (these|this|all) (email|notification)/i,
+  /manage your (email |notification )?preferences/i,
+  /you (have been |were )?(un)?subscribed/i,
+  /\bDMARC\b/i,
+  /\bSPF\b.*\b(pass|fail|alignment)\b/i,
+  /\bDKIM\b.*\b(pass|fail|alignment)\b/i,
+  /aggregate report/i,
+  /\bxml\.gz\b/i,
+];
+
+// ── Automated subject patterns (service/notification subjects, not customer inquiries) ──
+export const AUTOMATED_SUBJECT_PATTERNS: RegExp[] = [
+  /\b(delivery status|delivery notification|delivery report)\b/i,
+  /\b(payment (receipt|confirmation|processed))\b/i,
+  /\b(order (confirmation|shipped|delivered))\b/i,
+  /\b(invoice #|invoice attached|your invoice)\b/i,
+  /\b(account (update|notification|alert|verification))\b/i,
+  /\b(password (reset|changed|expir))\b/i,
+  /\b(security (alert|notification|update))\b/i,
+  /\b(welcome to|thanks for (signing|registering|joining))\b/i,
+  /\b(your (subscription|membership|plan|trial))\b/i,
+  /\b(system (maintenance|update|notification))\b/i,
+  /\b(report for|reporting period|aggregate report)\b/i,
+  /\bDMARC\b/i,
+  /\b(weekly|monthly|daily) (report|summary|digest|update)\b/i,
+  /\bnewsletter\b/i,
+  /\bprice (alert|change|update)\b/i,
 ];
