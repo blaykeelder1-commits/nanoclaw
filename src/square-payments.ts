@@ -8,8 +8,12 @@ import fs from 'fs';
 import nodemailer from 'nodemailer';
 import Database from 'better-sqlite3';
 import { google, calendar_v3, sheets_v4 } from 'googleapis';
+import { CircuitBreaker } from './circuit-breaker.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+import { resilientFetch } from './resilient-fetch.js';
+
+const squareBreaker = new CircuitBreaker('square-api');
 
 // ── Square config ───────────────────────────────────────────────
 const squareConfig = readEnvFile([
@@ -32,7 +36,7 @@ const BASE_URL =
 
 // ── SMTP config ─────────────────────────────────────────────────
 const smtpConfig = readEnvFile(['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM']);
-const BUSINESS_EMAIL = 'blayke.elder1@gmail.com';
+const BUSINESS_EMAIL = 'info@sheridantrailerrentals.us';
 
 // ── Google Calendar + Sheets config ─────────────────────────────
 const gcalConfig = readEnvFile(['GOOGLE_SERVICE_ACCOUNT_KEY', 'SHERIDAN_SPREADSHEET_ID']);
@@ -684,7 +688,7 @@ export async function handleSquareCheckout(
   const idempotencyKey = crypto.randomUUID();
 
   try {
-    const resp = await fetch(`${BASE_URL}/v2/online-checkout/payment-links`, {
+    const resp = await resilientFetch(`${BASE_URL}/v2/online-checkout/payment-links`, {
       method: 'POST',
       headers: {
         'Square-Version': '2024-11-20',
@@ -707,7 +711,7 @@ export async function handleSquareCheckout(
           redirect_url: `https://sheridantrailerrentals.us/form/?booking=${bookingId}`,
         },
       }),
-    });
+    }, { breaker: squareBreaker, label: 'square-payment-link' });
 
     const data = (await resp.json()) as {
       payment_link?: { id: string; url: string; order_id: string };
@@ -754,11 +758,14 @@ export async function handleSquareWebhook(body: string, signature: string): Prom
       logger.warn('Square webhook: missing signature header, rejecting');
       return false;
     }
-    const hmac = crypto.createHmac('sha256', webhookSigKey);
-    hmac.update(body);
-    const expected = hmac.digest('base64');
-    if (signature !== expected) {
-      logger.warn('Square webhook signature mismatch');
+    const expected = crypto.createHmac('sha256', webhookSigKey).update(body).digest('base64');
+    try {
+      if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+        logger.warn('Square webhook signature mismatch');
+        return false;
+      }
+    } catch {
+      logger.warn('Square webhook signature comparison failed (length mismatch)');
       return false;
     }
   } else {
@@ -851,9 +858,9 @@ async function confirmBookingFromSquare(
 ): Promise<boolean> {
   try {
     // Fetch the order to get line items and customer info
-    const orderResp = await fetch(`${BASE_URL}/v2/orders/${orderId}`, {
+    const orderResp = await resilientFetch(`${BASE_URL}/v2/orders/${orderId}`, {
       headers: { 'Square-Version': '2024-11-20', Authorization: `Bearer ${ACCESS_TOKEN}` },
-    });
+    }, { breaker: squareBreaker, label: 'square-order' });
 
     if (!orderResp.ok) {
       logger.error({ status: orderResp.status, orderId }, 'Failed to fetch Square order');
@@ -943,9 +950,9 @@ async function confirmBookingFromSquare(
 
     // Fallback: try to get from payment
     if (!customerName || !customerEmail) {
-      const payResp = await fetch(`${BASE_URL}/v2/payments/${paymentId}`, {
+      const payResp = await resilientFetch(`${BASE_URL}/v2/payments/${paymentId}`, {
         headers: { 'Square-Version': '2024-11-20', Authorization: `Bearer ${ACCESS_TOKEN}` },
-      });
+      }, { breaker: squareBreaker, label: 'square-payment' });
       if (payResp.ok) {
         const payData = (await payResp.json()) as {
           payment?: { buyer_email_address?: string; note?: string; card_details?: { card?: { cardholder_name?: string } } };

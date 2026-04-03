@@ -23,7 +23,7 @@ import { readEnvFile } from './env.js';
 
 const DB_PATH = path.join(process.cwd(), 'services', 'booking', 'data', 'bookings.db');
 const DRY_RUN = process.argv.includes('--dry-run');
-const OWNER_EMAIL = 'blayke.elder1@gmail.com';
+const OWNER_EMAIL = 'info@sheridantrailerrentals.us';
 
 // ── Load env ────────────────────────────────────────────────────────
 
@@ -246,6 +246,10 @@ function buildReminderEmail(booking: BalanceBooking, paymentUrl: string, daysLef
           Once paid, you'll receive the lock code to access the equipment.
         </p>
 
+        <p style="font-size: 13px; color: #9ca3af; text-align: center; margin-top: 8px;">
+          If you've already submitted your payment, please disregard this message — it may take a moment to process.
+        </p>
+
         <p style="font-size: 14px; color: #4b5563; margin-top: 20px;">
           Questions? Reply to this email or text us at (817) 587-1460.
         </p>
@@ -265,22 +269,34 @@ function buildOwnerAlert(booking: BalanceBooking, daysLeft: number): { subject: 
   const dates: string[] = JSON.parse(booking.dates);
   const dateRange = dates.length === 1 ? dates[0] : `${dates[0]} to ${dates[dates.length - 1]}`;
 
+  const urgencyTag = daysLeft <= 0 ? 'TODAY' : daysLeft <= 2 ? 'URGENT' : 'REMINDER';
+  const action = daysLeft <= 0
+    ? 'Pickup is TODAY. Call the customer or cancel the booking.'
+    : daysLeft <= 2
+    ? 'Pickup is in ' + daysLeft + ' day' + (daysLeft > 1 ? 's' : '') + '. Customer has been reminded — follow up if needed.'
+    : 'First reminder sent. No action needed yet.';
+
   return {
-    subject: `⚠️ Unpaid balance: ${booking.customer_first} ${booking.customer_last} — ${booking.equipment_label}`,
+    subject: `[${urgencyTag}] Unpaid balance: ${booking.customer_first} ${booking.customer_last} — ${booking.equipment_label} ($${booking.balance.toFixed(2)})`,
     html: `
-      <p><strong>Customer has not paid their balance.</strong></p>
-      <ul>
-        <li>Customer: ${booking.customer_first} ${booking.customer_last}</li>
-        <li>Email: ${booking.customer_email}</li>
-        <li>Phone: ${booking.customer_phone}</li>
-        <li>Equipment: ${booking.equipment_label}</li>
-        <li>Dates: ${dateRange}</li>
-        <li>Balance owed: $${booking.balance.toFixed(2)}</li>
-        <li>Days until pickup: ${daysLeft}</li>
-        <li>Reminders sent: ${booking.balance_reminder_count}</li>
-        <li>Booking ID: ${booking.id}</li>
-      </ul>
-      <p>Consider calling the customer or cancelling the booking if they don't respond.</p>
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: ${daysLeft <= 0 ? '#dc2626' : daysLeft <= 2 ? '#d97706' : '#2563eb'}; color: white; padding: 16px 24px; border-radius: 8px 8px 0 0;">
+          <h2 style="margin: 0;">${urgencyTag}: Unpaid Balance — $${booking.balance.toFixed(2)}</h2>
+        </div>
+        <div style="background: #f9fafb; padding: 20px 24px; border: 1px solid #e5e7eb; border-top: none; font-size: 14px; color: #4b5563;">
+          <p><strong>${action}</strong></p>
+          <table style="width: 100%; font-size: 14px;">
+            <tr><td style="padding: 4px 0; font-weight: 600;">Customer:</td><td>${booking.customer_first} ${booking.customer_last}</td></tr>
+            <tr><td style="padding: 4px 0; font-weight: 600;">Phone:</td><td><a href="tel:${booking.customer_phone}">${booking.customer_phone}</a></td></tr>
+            <tr><td style="padding: 4px 0; font-weight: 600;">Email:</td><td>${booking.customer_email}</td></tr>
+            <tr><td style="padding: 4px 0; font-weight: 600;">Equipment:</td><td>${booking.equipment_label}</td></tr>
+            <tr><td style="padding: 4px 0; font-weight: 600;">Dates:</td><td>${dateRange}</td></tr>
+            <tr><td style="padding: 4px 0; font-weight: 600;">Balance:</td><td style="color: #dc2626; font-weight: 700;">$${booking.balance.toFixed(2)}</td></tr>
+            <tr><td style="padding: 4px 0; font-weight: 600;">Reminders sent:</td><td>${booking.balance_reminder_count + 1} of 3</td></tr>
+          </table>
+          <p style="color: #9ca3af; font-size: 13px; margin-top: 16px;">Booking ID: ${booking.id}</p>
+        </div>
+      </div>
     `,
   };
 }
@@ -342,16 +358,14 @@ async function main(): Promise<void> {
         WHERE id = ?
       `).run(new Date().toISOString(), new Date().toISOString(), booking.id);
 
-      // On day-of, also alert the owner
-      if (days <= 0) {
-        const alert = buildOwnerAlert(booking, days);
-        await transporter.sendMail({
-          from: `Sheridan Rentals <${from}>`,
-          to: OWNER_EMAIL,
-          subject: alert.subject,
-          html: alert.html,
-        }).catch(err => console.error(`[balance] Owner alert failed: ${err.message}`));
-      }
+      // Alert the owner on every balance reminder so they have full visibility
+      const alert = buildOwnerAlert(booking, days);
+      await transporter.sendMail({
+        from: `Sheridan Rentals <${from}>`,
+        to: OWNER_EMAIL,
+        subject: alert.subject,
+        html: alert.html,
+      }).catch(err => console.error(`[balance] Owner alert failed: ${err.message}`));
 
       results.push({ bookingId: booking.id, email: booking.customer_email, status: 'sent', daysLeft: days });
       console.log(`Balance reminder sent to ${booking.customer_email} for ${booking.id} ($${booking.balance}, ${days} days left)`);

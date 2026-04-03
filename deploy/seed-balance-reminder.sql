@@ -31,6 +31,28 @@ Report the results back. If any bookings have unpaid balances due today, flag th
   1
 );
 
+-- Google Sheet sync — runs every 6 hours so the dashboard stays current
+INSERT OR REPLACE INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at, execution_mode, fallback_to_container)
+VALUES (
+  'sheridan-sheet-sync',
+  'sheridan-rentals',
+  '__scheduled__',
+  'Sync all Sheridan Rentals bookings to the Google Sheets dashboard.
+
+Execute: npx tsx tools/bookings/sync-to-sheet.ts --spreadsheet-id "$SHERIDAN_SPREADSHEET_ID"
+
+This updates the Bookings tab with current data: status, deposit paid, balance due, dates, customer info.
+Report how many bookings were synced.',
+  'cron',
+  '0 */6 * * *',
+  'group',
+  datetime('now'),
+  'active',
+  datetime('now'),
+  'cli',
+  1
+);
+
 -- Also add a followup task if it doesn't exist
 INSERT OR IGNORE INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at, execution_mode, fallback_to_container)
 VALUES (
