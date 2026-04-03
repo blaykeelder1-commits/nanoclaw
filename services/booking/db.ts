@@ -136,6 +136,11 @@ export function updateBookingStatus(id: string, status: BookingStatus): void {
     .run(status, new Date().toISOString(), id);
 }
 
+export function clearBalance(id: string): void {
+  db.prepare('UPDATE bookings SET balance = 0, updated_at = ? WHERE id = ?')
+    .run(new Date().toISOString(), id);
+}
+
 export function setCalendarEventId(id: string, eventId: string): void {
   db.prepare('UPDATE bookings SET calendar_event_id = ?, updated_at = ? WHERE id = ?')
     .run(eventId, new Date().toISOString(), id);
@@ -163,7 +168,7 @@ export function getBookingsByEmail(email: string): Booking[] {
 export function getActiveBookings(): Booking[] {
   const rows = db.prepare(`
     SELECT * FROM bookings
-    WHERE status IN ('pending', 'confirmed')
+    WHERE status IN ('pending', 'paid', 'confirmed')
     ORDER BY created_at DESC
   `).all() as any[];
   return rows.map(rowToBooking);

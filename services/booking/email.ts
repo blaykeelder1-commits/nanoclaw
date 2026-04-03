@@ -203,16 +203,16 @@ export async function sendPaymentReceivedNotification(booking: Booking): Promise
   await sendWithRetry(t, {
     from: getFrom(),
     to: OWNER_EMAIL,
-    subject: `Deposit Received: ${booking.equipmentLabel} — ${booking.customer.firstName} ${booking.customer.lastName} ($${booking.deposit.toFixed(2)})`,
+    subject: `${booking.balance > 0 ? 'Deposit' : 'Full Payment'} Received: ${booking.equipmentLabel} — ${booking.customer.firstName} ${booking.customer.lastName} ($${(booking.balance > 0 ? booking.deposit : booking.subtotal + booking.deposit).toFixed(2)})`,
     html: `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto;">
         <div style="background: #16a34a; color: white; padding: 16px 24px; border-radius: 8px 8px 0 0;">
-          <h2 style="margin: 0;">Deposit Received — $${booking.deposit.toFixed(2)}</h2>
+          <h2 style="margin: 0;">${booking.balance > 0 ? 'Deposit' : 'Full Payment'} Received — $${(booking.balance > 0 ? booking.deposit : booking.subtotal + booking.deposit).toFixed(2)}</h2>
         </div>
         <div style="background: #f9fafb; padding: 20px 24px; border: 1px solid #e5e7eb; border-top: none; font-size: 14px; color: #4b5563;">
-          <p><strong>${booking.customer.firstName} ${booking.customer.lastName}</strong> paid the $${booking.deposit.toFixed(2)} deposit for <strong>${booking.equipmentLabel}</strong>.</p>
+          <p><strong>${booking.customer.firstName} ${booking.customer.lastName}</strong> paid $${(booking.balance > 0 ? booking.deposit : booking.subtotal + booking.deposit).toFixed(2)} for <strong>${booking.equipmentLabel}</strong>.</p>
           <p>Dates: ${booking.dates[0]} to ${booking.dates[booking.dates.length - 1]} (${booking.numDays} day${booking.numDays > 1 ? 's' : ''})</p>
-          <p>Balance remaining: $${booking.balance.toFixed(2)}</p>
+          ${booking.balance > 0 ? `<p>Balance remaining: $${booking.balance.toFixed(2)} (due before pickup)</p>` : '<p>Fully paid — no balance remaining.</p>'}
           <p>Calendar event created. Customer confirmation email sent.</p>
           <p style="color: #9ca3af; font-size: 13px; margin-top: 16px;">Booking ID: ${booking.id}</p>
         </div>

@@ -18,7 +18,7 @@ import {
   initDb, generateBookingId, createBooking, getBooking,
   getBookingByOrderId, updateBookingStatus, setCalendarEventId,
   hasOverlappingBooking, cancelBooking, getActiveBookings, getBookingsByEmail,
-  expireStalePendingBookings, getBookedDatesFromDb,
+  expireStalePendingBookings, getBookedDatesFromDb, clearBalance,
 } from './db.js';
 import {
   sendOwnerNotification, sendCustomerConfirmation,
@@ -324,6 +324,7 @@ async function handleSquareWebhook(req: http.IncomingMessage, res: http.ServerRe
     if (booking.status === 'paid' && booking.balance > 0) {
       console.log(`[webhook] Balance payment received for booking ${booking.id}`);
       updateBookingStatus(booking.id, 'confirmed');
+      clearBalance(booking.id);
 
       const updatedBooking = getBooking(booking.id)!;
       sendCustomerConfirmation(updatedBooking).catch(err =>
