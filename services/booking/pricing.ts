@@ -110,7 +110,8 @@ export function calculatePrice(
   }
 
   const subtotal = lineItems.reduce((sum, item) => sum + item.total, 0);
-  const deposit = equipment.deposit;
+  // RV pickup (no delivery) requires higher deposit ($500) since trailer leaves the lot
+  const deposit = equipmentKey === 'rv' && !validAddOns.includes('delivery') ? 500 : equipment.deposit;
 
   // RV Camper payment mode: same-week = full payment required, otherwise deposit-only allowed
   // Car Hauler / Landscaping Trailer: always full payment
