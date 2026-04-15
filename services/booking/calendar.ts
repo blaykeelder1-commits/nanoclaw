@@ -29,6 +29,11 @@ function getCal(): calendar_v3.Calendar {
   return calClient;
 }
 
+/** Extract YYYY-MM-DD in America/Chicago timezone from a Date object. */
+function toChicagoDate(date: Date): string {
+  return date.toLocaleDateString('sv-SE', { timeZone: 'America/Chicago' });
+}
+
 // ── Free/Busy Check ─────────────────────────────────────────────────
 
 export async function getBookedSlots(
@@ -72,14 +77,16 @@ export async function datesAreAvailable(
   if (busySlots.length === 0) return true;
 
   // Convert busy slots to date sets for comparison (all-day events)
+  // Must use America/Chicago timezone — the VPS timezone differs from the
+  // business timezone, and .toISOString() returns UTC which shifts dates.
   const busyDates = new Set<string>();
   for (const slot of busySlots) {
     const start = new Date(slot.start);
     const end = new Date(slot.end);
     const current = new Date(start);
     while (current < end) {
-      busyDates.add(current.toISOString().split('T')[0]);
-      current.setDate(current.getDate() + 1);
+      busyDates.add(toChicagoDate(current));
+      current.setTime(current.getTime() + 86_400_000);
     }
   }
 
