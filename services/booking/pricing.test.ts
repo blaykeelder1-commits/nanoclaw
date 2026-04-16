@@ -12,11 +12,12 @@ function daysFromNow(n: number): string {
 // ── calculatePrice — basic pricing ───────────────────────────────────
 
 describe('calculatePrice — basic', () => {
-  it('calculates RV price for 3 nights (pickup — $500 deposit)', () => {
+  it('calculates RV price for 3 nights (pricing-only — $250 equipment default)', () => {
     const result = calculatePrice('rv', 3);
     expect(result.subtotal).toBe(150 * 3);
-    // RV pickup (no delivery) defaults to $500 deposit; delivery lowers it to $250
-    expect(result.deposit).toBe(500);
+    // Pricing uses the equipment default; the server layer enforces that RV must include
+    // delivery (or an explicit promo override), so an un-configured RV never reaches Square.
+    expect(result.deposit).toBe(250);
     expect(result.numDays).toBe(3);
     expect(result.equipment.key).toBe('rv');
   });
@@ -146,10 +147,10 @@ describe('buildSquareLineItems — full mode', () => {
     expect(items[1].quantity).toBe('3');
     expect(items[1].base_price_money.amount).toBe(85 * 100);
 
-    // Deposit — RV pickup defaults to $500
+    // Deposit — equipment default $250 (server layer forces delivery add-on for real bookings)
     expect(items[2].name).toBe('Refundable Security Deposit');
     expect(items[2].quantity).toBe('1');
-    expect(items[2].base_price_money.amount).toBe(500 * 100);
+    expect(items[2].base_price_money.amount).toBe(250 * 100);
   });
 
   it('all amounts are in cents (USD)', () => {
@@ -175,8 +176,8 @@ describe('buildSquareLineItems — deposit mode', () => {
     expect(items[0].name).toContain('Refundable Security Deposit');
     expect(items[0].name).toContain('balance');
     expect(items[0].quantity).toBe('1');
-    // RV pickup → $500 deposit
-    expect(items[0].base_price_money.amount).toBe(500 * 100);
+    // Equipment default $250 (server enforces delivery for real RV bookings)
+    expect(items[0].base_price_money.amount).toBe(250 * 100);
   });
 
   it('deposit line item includes the balance amount in the name', () => {
@@ -342,6 +343,6 @@ describe('calculatePrice — RIVER promo', () => {
       promoCode: 'NOPE',
     });
     expect(pricing.subtotal).toBe(150);
-    expect(pricing.deposit).toBe(500); // pickup default (no delivery add-on)
+    expect(pricing.deposit).toBe(250); // equipment default; server rejects missing delivery
   });
 });

@@ -291,15 +291,10 @@ export function calculatePrice(
 
   const subtotal = lineItems.reduce((sum, item) => sum + item.total, 0);
 
-  // Deposit: promo overrides > RV pickup ($500) > equipment default
-  let deposit: number;
-  if (promo?.deposit) {
-    deposit = promo.deposit;
-  } else if (equipmentKey === 'rv' && !validAddOns.includes('delivery')) {
-    deposit = 500;
-  } else {
-    deposit = equipment.deposit;
-  }
+  // Deposit: promo overrides > equipment default.
+  // Delivery is mandatory for RV at the server level; pickup mode is only reachable via a promo
+  // that sets its own deposit (e.g. RIVER). So the equipment default always holds for non-promo flows.
+  const deposit: number = promo?.deposit ?? equipment.deposit;
 
   // Payment mode: customer can choose full; same-week RV always full; otherwise deposit allowed
   let paymentMode: PaymentMode;

@@ -17,7 +17,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { readEnvFile } from './env.js';
-import { EQUIPMENT, calculatePrice } from './pricing.js';
+import { EQUIPMENT, calculatePrice, resolvePromoCode } from './pricing.js';
 import { getBookedSlots, datesAreAvailable, createBookingEvent, deleteCalendarEvent } from './calendar.js';
 import { createPaymentLink, checkOrderPayment, refundPayment } from './square.js';
 import {
@@ -233,6 +233,28 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
   const promoCode = body.promoCode;
   const pricing = calculatePrice(equipmentKey, numDays, body.addOns || [], { dates, paymentMode, promoCode });
 
+  // RV: delivery is mandatory unless a promo (e.g. RIVER) explicitly removes it.
+  // No self-service pickup — customers must contact the owner to get a promo code.
+  const deliveryAddress = (body.deliveryAddress || '').trim();
+  if (equipmentKey === 'rv') {
+    const promo = resolvePromoCode(promoCode, equipmentKey);
+    const promoRemovesDelivery = promo?.removeDelivery === true;
+    if (!promoRemovesDelivery && !pricing.addOns.includes('delivery')) {
+      json(res, 400, { error: 'Delivery is required for RV rentals.' });
+      return;
+    }
+    if (pricing.addOns.includes('delivery')) {
+      if (!deliveryAddress) {
+        json(res, 400, { error: 'Delivery address is required for RV rentals.' });
+        return;
+      }
+      if (deliveryAddress.length > 500) {
+        json(res, 400, { error: 'Delivery address is too long (max 500 characters).' });
+        return;
+      }
+    }
+  }
+
   // Generate booking ID and create Square payment link
   const bookingId = generateBookingId();
 
@@ -261,6 +283,7 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
     squareOrderId: paymentResult.orderId,
     squarePaymentLinkId: paymentResult.paymentLinkId,
     paymentUrl: paymentResult.paymentUrl,
+    deliveryAddress,
   });
 
   // Associate uploaded license photo with the booking (move session-scoped upload → booking-scoped)
