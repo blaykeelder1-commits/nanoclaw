@@ -3,13 +3,19 @@
  *
  * Lightweight HTTP server on port 3200 (no Express).
  * Endpoints:
- *   POST /api/availability   — Check booked date ranges from Google Calendar
- *   POST /api/checkout       — Validate, price, create Square payment link, store booking
- *   POST /api/square-webhook — Payment confirmation → calendar event + email
- *   GET  /api/booking/:id    — Confirmation page data
- *   GET  /health             — Health check
+ *   POST /api/availability      — Check booked date ranges from Google Calendar
+ *   POST /api/checkout          — Validate, price, create Square payment link, store booking
+ *   POST /api/square-webhook    — Payment confirmation → calendar event + email
+ *   POST /api/upload            — License photo upload (multipart)
+ *   POST /api/upload-inspection — Car hauler inspection photo upload (multipart)
+ *   GET  /api/inspection/:id    — List inspection photos for a booking
+ *   POST /api/cancel            — Cancel a booking (+optional refund)
+ *   GET  /api/booking/:id       — Confirmation page data
+ *   GET  /health                — Health check
  */
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
 import { readEnvFile } from './env.js';
 import { EQUIPMENT, calculatePrice } from './pricing.js';
 import { getBookedSlots, datesAreAvailable, createBookingEvent, deleteCalendarEvent } from './calendar.js';
@@ -18,7 +24,7 @@ import {
   initDb, generateBookingId, createBooking, getBooking,
   getBookingByOrderId, updateBookingStatus, setCalendarEventId,
   hasOverlappingBooking, cancelBooking, getActiveBookings, getBookingsByEmail,
-  expireStalePendingBookings, getBookedDatesFromDb, clearBalance,
+  expireStalePendingBookings, getBookedDatesFromDb, clearBalance, setLicensePhoto,
 } from './db.js';
 import {
   sendOwnerNotification, sendCustomerConfirmation,
@@ -222,9 +228,10 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
 
   // Calculate pricing (pass dates for same-week detection on RV)
   // Only allow deposit mode when frontend explicitly sends 'deposit'
-  const rawMode = (body as any).paymentMode;
+  const rawMode = body.paymentMode;
   const paymentMode: 'full' | 'deposit' | undefined = rawMode === 'deposit' ? 'deposit' : 'full';
-  const pricing = calculatePrice(equipmentKey, numDays, body.addOns || [], { dates, paymentMode });
+  const promoCode = body.promoCode;
+  const pricing = calculatePrice(equipmentKey, numDays, body.addOns || [], { dates, paymentMode, promoCode });
 
   // Generate booking ID and create Square payment link
   const bookingId = generateBookingId();
@@ -255,6 +262,27 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
     squarePaymentLinkId: paymentResult.paymentLinkId,
     paymentUrl: paymentResult.paymentUrl,
   });
+
+  // Associate uploaded license photo with the booking (move session-scoped upload → booking-scoped)
+  if (body.licenseFileId && body.sessionId
+      && isSafePathSegment(body.licenseFileId) && isSafePathSegment(body.sessionId)) {
+    const srcDir = path.join(UPLOAD_DIR, body.sessionId);
+    const destDir = path.join(UPLOAD_DIR, bookingId);
+    try {
+      fs.mkdirSync(destDir, { recursive: true });
+      const srcFile = path.join(srcDir, body.licenseFileId);
+      if (fs.existsSync(srcFile)) {
+        fs.copyFileSync(srcFile, path.join(destDir, body.licenseFileId));
+        fs.unlinkSync(srcFile);
+        try { fs.rmdirSync(srcDir); } catch { /* non-empty is fine */ }
+      }
+      setLicensePhoto(bookingId, body.licenseFileId);
+      console.log(`[checkout] License photo linked: ${bookingId}/${body.licenseFileId}`);
+    } catch (err: any) {
+      console.error(`[checkout] License photo link error: ${err.message}`);
+      // Non-fatal — booking is paid, owner can request a re-upload
+    }
+  }
 
   // Send owner notification (don't block response)
   sendOwnerNotification(booking).catch(err =>
@@ -389,6 +417,202 @@ async function handleSquareWebhook(req: http.IncomingMessage, res: http.ServerRe
   } catch (err: any) {
     console.error(`[webhook] Parse error: ${err.message}`);
   }
+}
+
+// ── File Uploads (License + Inspection Photos) ──────────────────────
+
+const UPLOAD_DIR = path.join(process.cwd(), 'data', 'uploads');
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
+const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif']);
+const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
+
+/** Reject anything that could traverse out of UPLOAD_DIR. Accepts only alphanumerics, dot, underscore, hyphen. */
+function isSafePathSegment(s: string | undefined | null): s is string {
+  return typeof s === 'string' && s.length > 0 && s.length <= 128 && SAFE_SEGMENT.test(s) && s !== '.' && s !== '..';
+}
+
+interface ParsedUpload {
+  fields: Record<string, string>;
+  file?: { name: string; data: Buffer; contentType: string };
+}
+
+function parseMultipartFormData(req: http.IncomingMessage, maxSize = MAX_UPLOAD_BYTES): Promise<ParsedUpload> {
+  return new Promise((resolve, reject) => {
+    const contentType = req.headers['content-type'] || '';
+    const boundaryMatch = contentType.match(/boundary=(?:"?)([^";]+)/);
+    if (!boundaryMatch) { reject(new Error('No multipart boundary')); return; }
+    const boundary = boundaryMatch[1];
+
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let aborted = false;
+    req.on('data', (chunk: Buffer) => {
+      if (aborted) return;
+      size += chunk.length;
+      if (size > maxSize) {
+        aborted = true;
+        req.destroy();
+        reject(new Error('Payload too large'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      if (aborted) return;
+      const buf = Buffer.concat(chunks);
+      // Split on boundary using binary-preserving encoding
+      const parts = buf.toString('binary').split('--' + boundary);
+      const fields: Record<string, string> = {};
+      let file: ParsedUpload['file'];
+
+      for (const part of parts) {
+        if (part === '--\r\n' || part === '--' || !part.includes('Content-Disposition')) continue;
+        const headerEnd = part.indexOf('\r\n\r\n');
+        if (headerEnd === -1) continue;
+        const headers = part.substring(0, headerEnd);
+        let bodyStr = part.substring(headerEnd + 4);
+        if (bodyStr.endsWith('\r\n')) bodyStr = bodyStr.slice(0, -2);
+
+        const nameMatch = headers.match(/name="([^"]+)"/);
+        if (!nameMatch) continue;
+        const fieldName = nameMatch[1];
+
+        const filenameMatch = headers.match(/filename="([^"]+)"/);
+        if (filenameMatch) {
+          const ctMatch = headers.match(/Content-Type:\s*([^\r\n;]+)/i);
+          file = {
+            name: filenameMatch[1],
+            data: Buffer.from(bodyStr, 'binary'),
+            contentType: ctMatch ? ctMatch[1].trim().toLowerCase() : 'application/octet-stream',
+          };
+        } else {
+          fields[fieldName] = bodyStr;
+        }
+      }
+      resolve({ fields, file });
+    });
+    req.on('error', reject);
+  });
+}
+
+function safeExtension(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  return ALLOWED_EXTENSIONS.has(ext) ? ext : '.jpg';
+}
+
+async function handleUpload(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  let parsed: ParsedUpload;
+  try {
+    parsed = await parseMultipartFormData(req);
+  } catch (err: any) {
+    const status = err.message === 'Payload too large' ? 413 : 400;
+    json(res, status, { error: err.message });
+    return;
+  }
+
+  const { fields, file } = parsed;
+  if (!file) { json(res, 400, { error: 'No file uploaded' }); return; }
+  if (!ALLOWED_IMAGE_TYPES.has(file.contentType)) {
+    json(res, 400, { error: 'Unsupported image type. Use JPEG, PNG, WebP, or HEIC.' });
+    return;
+  }
+
+  // Session ID: use supplied value if safe, else generate one
+  const suppliedSession = fields.sessionId;
+  const sessionId = isSafePathSegment(suppliedSession)
+    ? suppliedSession
+    : `sess-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
+  const fileId = `lic-${Date.now()}-${Math.random().toString(36).substring(2, 8)}${safeExtension(file.name)}`;
+
+  try {
+    const dir = path.join(UPLOAD_DIR, sessionId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, fileId), file.data);
+    console.log(`[upload] License photo saved: ${sessionId}/${fileId} (${file.data.length} bytes)`);
+    json(res, 200, { fileId, sessionId });
+  } catch (err: any) {
+    console.error(`[upload] Write error: ${err.message}`);
+    json(res, 500, { error: 'Upload failed' });
+  }
+}
+
+async function handleUploadInspection(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  let parsed: ParsedUpload;
+  try {
+    parsed = await parseMultipartFormData(req);
+  } catch (err: any) {
+    const status = err.message === 'Payload too large' ? 413 : 400;
+    json(res, status, { error: err.message });
+    return;
+  }
+
+  const { fields, file } = parsed;
+  if (!file) { json(res, 400, { error: 'No file uploaded' }); return; }
+  if (!ALLOWED_IMAGE_TYPES.has(file.contentType)) {
+    json(res, 400, { error: 'Unsupported image type' });
+    return;
+  }
+
+  const bookingId = fields.bookingId;
+  const type = fields.type;   // 'before' | 'after'
+  const angle = fields.angle; // 'front' | 'back' | 'left' | 'right'
+
+  if (!bookingId || !type || !angle) {
+    json(res, 400, { error: 'bookingId, type, and angle are required' });
+    return;
+  }
+  if (!isSafePathSegment(bookingId)) { json(res, 400, { error: 'Invalid bookingId' }); return; }
+  if (!['before', 'after'].includes(type) || !['front', 'back', 'left', 'right'].includes(angle)) {
+    json(res, 400, { error: 'Invalid type or angle' });
+    return;
+  }
+
+  const booking = getBooking(bookingId);
+  if (!booking) { json(res, 404, { error: 'Booking not found' }); return; }
+  if (booking.equipment !== 'carhauler') {
+    json(res, 400, { error: 'Inspection photos are only available for Car Hauler rentals' });
+    return;
+  }
+
+  const fileId = `insp-${type}-${angle}-${Date.now()}${safeExtension(file.name)}`;
+  try {
+    const dir = path.join(UPLOAD_DIR, bookingId, 'inspection');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, fileId), file.data);
+    console.log(`[inspection] Photo saved: ${bookingId}/inspection/${fileId} (${file.data.length} bytes)`);
+    json(res, 200, { fileId, bookingId, type, angle });
+  } catch (err: any) {
+    console.error(`[inspection] Write error: ${err.message}`);
+    json(res, 500, { error: 'Upload failed' });
+  }
+}
+
+function handleGetInspection(res: http.ServerResponse, bookingId: string, typeFilter: string): void {
+  if (!isSafePathSegment(bookingId)) { json(res, 400, { error: 'Invalid bookingId' }); return; }
+
+  const dir = path.join(UPLOAD_DIR, bookingId, 'inspection');
+  const photos: Array<{ fileId: string; type: string; angle: string }> = [];
+
+  try {
+    if (fs.existsSync(dir)) {
+      const files = fs.readdirSync(dir);
+      for (const f of files) {
+        const match = f.match(/^insp-(before|after)-(front|back|left|right)-/);
+        if (!match) continue;
+        const fType = match[1];
+        const fAngle = match[2];
+        if (!typeFilter || fType === typeFilter) {
+          photos.push({ fileId: f, type: fType, angle: fAngle });
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error(`[inspection] Read error: ${err.message}`);
+  }
+
+  json(res, 200, { bookingId, photos });
 }
 
 async function handleCancel(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -552,6 +776,29 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     if (req.method === 'POST' && url === '/api/square-webhook') {
       await handleSquareWebhook(req, res);
       return;
+    }
+
+    // POST /api/upload  (license photo)
+    if (req.method === 'POST' && url === '/api/upload') {
+      await handleUpload(req, res);
+      return;
+    }
+
+    // POST /api/upload-inspection  (car hauler inspection photos)
+    if (req.method === 'POST' && url === '/api/upload-inspection') {
+      await handleUploadInspection(req, res);
+      return;
+    }
+
+    // GET /api/inspection/:bookingId?type=before|after
+    if (req.method === 'GET' && url.startsWith('/api/inspection/')) {
+      const rest = url.split('/api/inspection/')[1] || '';
+      const [inspBookingId, qs] = rest.split('?');
+      const typeFilter = new URLSearchParams(qs || '').get('type') || '';
+      if (inspBookingId) {
+        handleGetInspection(res, inspBookingId, typeFilter);
+        return;
+      }
     }
 
     // POST /api/cancel

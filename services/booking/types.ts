@@ -57,6 +57,13 @@ export interface CheckoutRequest {
   addOns?: string[];     // ['generator', 'delivery']
   details?: string;
   timeSlot?: string;
+  paymentMode?: PaymentMode;
+  /** Owner-distributed promo code (e.g. "RIVER" for RV self-tow). */
+  promoCode?: string;
+  /** File ID of a previously-uploaded license photo from /api/upload. */
+  licenseFileId?: string;
+  /** Session ID used during the license upload (must match /api/upload response). */
+  sessionId?: string;
 }
 
 export interface CheckoutResponse {
@@ -88,6 +95,8 @@ export interface Booking {
   refundId: string;
   followupSent: boolean;
   followupSentAt: string | null;
+  /** File ID of the license photo on disk (empty string if none uploaded). */
+  licenseFileId: string;
   createdAt: string;
   updatedAt: string;
 }

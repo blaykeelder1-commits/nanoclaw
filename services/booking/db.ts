@@ -58,6 +58,7 @@ function createSchema(): void {
     `ALTER TABLE bookings ADD COLUMN refund_id TEXT NOT NULL DEFAULT ''`,
     `ALTER TABLE bookings ADD COLUMN followup_sent INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE bookings ADD COLUMN followup_sent_at TEXT`,
+    `ALTER TABLE bookings ADD COLUMN license_photo TEXT NOT NULL DEFAULT ''`,
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }
@@ -144,6 +145,11 @@ export function clearBalance(id: string): void {
 export function setCalendarEventId(id: string, eventId: string): void {
   db.prepare('UPDATE bookings SET calendar_event_id = ?, updated_at = ? WHERE id = ?')
     .run(eventId, new Date().toISOString(), id);
+}
+
+export function setLicensePhoto(id: string, fileId: string): void {
+  db.prepare('UPDATE bookings SET license_photo = ?, updated_at = ? WHERE id = ?')
+    .run(fileId, new Date().toISOString(), id);
 }
 
 export function cancelBooking(id: string, refundId?: string): void {
@@ -261,6 +267,7 @@ function rowToBooking(row: any): Booking {
     refundId: row.refund_id || '',
     followupSent: !!row.followup_sent,
     followupSentAt: row.followup_sent_at || null,
+    licenseFileId: row.license_photo || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
