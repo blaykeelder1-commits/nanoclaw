@@ -1,7 +1,7 @@
 ---
 name: fb-marketplace
 description: Create and manage Facebook Marketplace listings for Sheridan Rentals. Use when asked to post, renew, or manage Marketplace rental listings.
-allowed-tools: Bash(npx tsx /workspace/project/tools/social/fb-marketplace.ts *), Bash(agent-browser:*)
+allowed-tools: Bash(npx tsx /workspace/project/tools/social/fb-marketplace.ts *), mcp__playwright__*
 ---
 
 # Facebook Marketplace — Sheridan Rentals
@@ -20,7 +20,16 @@ npx tsx /workspace/project/tools/social/fb-marketplace.ts create-listing \
   [--dry-run]
 ```
 
-If the Commerce API isn't available, the tool returns a `fallback_needed` status with all listing data formatted for manual posting via agent-browser.
+If the Commerce API isn't available, the tool returns a `fallback_needed` status with all listing data formatted for manual posting. In that case, drive Facebook Marketplace's web UI via Playwright MCP:
+
+1. `mcp__playwright__browser_navigate` to `https://www.facebook.com/marketplace/create/item`
+2. `mcp__playwright__browser_snapshot` to find the title/price/category/description fields by ref
+3. `mcp__playwright__browser_type` each field
+4. Upload photos via `mcp__playwright__browser_file_upload` on the photos input
+5. `mcp__playwright__browser_click` the Publish button
+6. `mcp__playwright__browser_wait_for_text` for the success state, capture the listing ID from the URL
+
+If login is required, escalate via `mcp__nanoclaw__escalate` (severity=urgent) — Marketplace requires interactive 2FA which Andy cannot complete autonomously.
 
 ## List Active Listings
 

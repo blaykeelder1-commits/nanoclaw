@@ -158,6 +158,7 @@ const SECRETS_SOCIAL = [
   'X_API_SECRET',
   'X_ACCESS_TOKEN',
   'X_ACCESS_SECRET',
+  'TWITTER_BEARER_TOKEN',
   'FB_PAGE_ID',
   'FB_PAGE_ACCESS_TOKEN',
   'LINKEDIN_ACCESS_TOKEN',
@@ -283,24 +284,21 @@ function validateGroupFolder(folder: string): void {
 
 /**
  * Sync skills from container/skills/ into .claude/skills/ under the CLI agent's cwd.
- * Rewrites container paths to host paths. For skills that use agent-browser,
- * strips the browser-specific command blocks and replaces with Playwright MCP guidance,
- * since the CLI agent uses Playwright MCP (not agent-browser).
+ * Skills are authored natively for both runtimes (Playwright MCP for CLI, agent-browser
+ * for container). All this function does is translate container workspace paths
+ * (/workspace/project, /workspace/group) to the equivalent host paths so the same
+ * `npx tsx` commands work in both modes.
  */
 function syncSkillsForCli(groupFolder: string, cwd: string): void {
   const skillsSrc = path.join(PROJECT_ROOT, 'container', 'skills');
   if (!fs.existsSync(skillsSrc)) return;
 
   const groupDir = path.join(GROUPS_DIR, groupFolder);
-  // Place skills in {cwd}/.claude/skills/ so Claude Code discovers them
   const skillsDst = path.join(cwd, '.claude', 'skills');
 
   for (const skillDir of fs.readdirSync(skillsSrc)) {
     const srcDir = path.join(skillsSrc, skillDir);
     if (!fs.statSync(srcDir).isDirectory()) continue;
-
-    // Skip agent-browser skill — CLI uses Playwright MCP instead
-    if (skillDir === 'agent-browser') continue;
 
     const dstDir = path.join(skillsDst, skillDir);
     fs.mkdirSync(dstDir, { recursive: true });
@@ -309,33 +307,8 @@ function syncSkillsForCli(groupFolder: string, cwd: string): void {
       const srcFile = path.join(srcDir, file);
       let content = fs.readFileSync(srcFile, 'utf-8');
 
-      // Rewrite container paths to host paths
       content = content.replace(/\/workspace\/project/g, PROJECT_ROOT);
       content = content.replace(/\/workspace\/group/g, groupDir);
-
-      // Replace allowed-tools frontmatter references
-      content = content.replace(
-        /Bash\(agent-browser:\*\)/g,
-        'mcp__playwright__*',
-      );
-
-      // Replace agent-browser command blocks with Playwright MCP equivalents.
-      // Rather than garbling individual commands, replace entire bash blocks
-      // that use agent-browser with a Playwright MCP note.
-      content = content.replace(
-        /```bash\n((?:.*agent-browser.*\n)+)```/g,
-        '```\n# Use Playwright MCP tools instead:\n# browser_navigate, browser_snapshot, browser_click, browser_type,\n# browser_wait_for_text, browser_close, etc.\n```',
-      );
-
-      // Replace any remaining inline agent-browser references
-      content = content.replace(
-        /`agent-browser\b[^`]*`/g,
-        '`Playwright MCP tool`',
-      );
-      content = content.replace(
-        /\bagent-browser\b/g,
-        'Playwright MCP',
-      );
 
       fs.writeFileSync(path.join(dstDir, file), content);
     }
