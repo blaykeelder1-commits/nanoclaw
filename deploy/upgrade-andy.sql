@@ -47,24 +47,25 @@ VALUES (
   'snak-daily-briefing',
   'snak-group',
   '__scheduled__',
-  'Generate and email the daily business briefing to the owner. Include ALL of these sections:
+  'Generate the daily business briefing and send it via WhatsApp to the main group (NOT email — email is disabled per global rules). Format as a single concise WhatsApp message using *single asterisks* for bold and bullet points. Skip any section with no data. Include:
 
-1. *Overnight Leads* — Check CRM for new contacts in the last 24 hours. Show name, company, source, and current deal stage.
+1. *Overnight Leads* — CRM contacts created in the last 24h. Show name, company, source, and current deal stage.
 
-2. *Follow-ups Due* — Run crm-query follow-up to find stale leads. List each with last contact date and touch count.
+2. *Follow-ups Due* — Run crm-query follow-up. Each with last-contact date and touch count.
 
-3. *Pipeline Health* — Run pipeline health --group snak-group. Show counts per stage and total deal value.
+3. *Pipeline Health* — Run pipeline health --group snak-group. Counts per stage + total deal value.
 
-4. *Upcoming Appointments* — Check Google Calendar for the next 7 days. List each with date, time, and business name.
+4. *Upcoming Appointments* — Google Calendar next 7 days.
 
-5. *IDDI Alerts* — Run iddi expiring --days 7 to check for products near expiration. Run iddi redistribution to check for optimization opportunities. Summarize any flags.
+5. *IDDI Alerts* — iddi expiring --days 7 + iddi redistribution. Summarize flags only.
 
-6. *Open Issues* — Check playbook.md for any flagged items or unresolved questions.
+6. *Open Complaints (>24h)* — Run: sqlite3 store/messages.db "SELECT customer_name, channel, category, ROUND(julianday(''now'')-julianday(created_at)) AS age_days, substr(message_snippet,1,80) FROM complaints WHERE resolution_status=''open'' AND business=''snak-group'' AND created_at < datetime(''now'',''-1 day'') ORDER BY age_days DESC". For each, show: customer/channel/age/brief. Flag any age_days > 7 with prefix "🚨 STUCK — needs Blayke today" and call mcp__nanoclaw__escalate (severity=urgent) per complaint.
 
-7. *What Andy Learned* — Summarize new patterns, common objections, or interesting questions from yesterday''s conversations.
+7. *Open Issues* — Check playbook.md for flagged items.
 
-Email subject: "Snak Group Daily Briefing — [Today''s Date]"
-Send to the owner email in owner-info.md.',
+8. *What Andy Learned* — One sentence on new patterns or notable conversations from yesterday.
+
+Title the WhatsApp message: "📊 Snak Group Daily Briefing — [Today''s Date]". Send via mcp__nanoclaw__send_message to the main group JID.',
   'cron',
   '0 8 * * 1-5',
   'group',
@@ -79,22 +80,23 @@ VALUES (
   'sheridan-daily-briefing',
   'sheridan-rentals',
   '__scheduled__',
-  'Generate and email the daily business briefing to the owner. Include ALL of these sections:
+  'Generate the daily Sheridan business briefing and send it via WhatsApp to the main group (NOT email). Format as a single concise WhatsApp message using *single asterisks* for bold and bullet points. Skip any section with no data. Include:
 
-1. *Tomorrow''s Pickups & Returns* — Check all 3 Google Calendars (RV Camper, Car Hauler, Landscaping Trailer) for tomorrow''s events. List each with equipment type, customer name, and time.
+1. *Tomorrow''s Pickups & Returns* — All 3 Google Calendars (RV Camper, Car Hauler, Landscaping Trailer). Each with equipment/customer/time.
 
-2. *This Week''s Bookings* — Summary of all bookings for the next 7 days, grouped by equipment type.
+2. *This Week''s Bookings* — Next 7 days, grouped by equipment type.
 
-3. *Overnight Inquiries* — Check CRM for new contacts in the last 24 hours. Show name, source, and what they''re asking about.
+3. *Overnight Inquiries* — CRM contacts created in last 24h. Show name, source, and topic.
 
-4. *Pending Follow-ups* — Run crm-query follow-up to find stale leads. List each with last contact date.
+4. *Pending Follow-ups* — crm-query follow-up. Each with last-contact date.
 
-5. *Pipeline Health* — Run pipeline health --group sheridan-rentals. Show counts per stage.
+5. *Pipeline Health* — pipeline health --group sheridan-rentals. Counts per stage.
 
-6. *Revenue Estimate* — Count this week''s confirmed bookings and multiply by typical rates (RV $150/night, Car Hauler $65/day, Landscaping $50/day). Show estimated gross revenue.
+6. *Revenue Estimate* — This week''s confirmed bookings × typical rates (RV $150/night, Car Hauler $65/day, Landscaping $50/day).
 
-Email subject: "Sheridan Rentals Daily Briefing — [Today''s Date]"
-Send to the owner email in owner-info.md.',
+7. *Open Complaints (>24h)* — Run: sqlite3 store/messages.db "SELECT customer_name, channel, category, ROUND(julianday(''now'')-julianday(created_at)) AS age_days, substr(message_snippet,1,80) FROM complaints WHERE resolution_status=''open'' AND business=''sheridan-rentals'' AND created_at < datetime(''now'',''-1 day'') ORDER BY age_days DESC". For each: customer/channel/age/brief. Flag age_days > 7 with prefix "🚨 STUCK — needs Blayke today" and call mcp__nanoclaw__escalate (severity=urgent).
+
+Title: "🚐 Sheridan Daily Briefing — [Today''s Date]". Send via mcp__nanoclaw__send_message to the main group JID.',
   'cron',
   '0 8 * * 1-5',
   'group',
@@ -369,3 +371,70 @@ UPDATE scheduled_tasks SET schedule_value = REPLACE(schedule_value, '0 4 ', '0 1
   WHERE schedule_value LIKE '0 4 %';
 UPDATE scheduled_tasks SET schedule_value = REPLACE(schedule_value, '0 5 ', '0 10 ')
   WHERE schedule_value LIKE '0 5 %';
+
+-- Stage 9: Stuck-complaint nag (weekdays 8 AM CT)
+-- Pings WhatsApp main group for any complaint open >7 days. Belt-and-suspenders
+-- alongside daily briefing — keeps stuck cases from disappearing into the table.
+
+INSERT OR REPLACE INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
+VALUES (
+  'complaint-nag-daily',
+  'main',
+  '__scheduled__',
+  'Surface stuck customer complaints for Blayke. Run:
+
+sqlite3 /workspace/project/store/messages.db "SELECT id, customer_name, channel, category, business, ROUND(julianday(''now'')-julianday(created_at)) AS age_days, substr(message_snippet,1,120) AS snippet FROM complaints WHERE resolution_status=''open'' AND created_at < datetime(''now'',''-7 days'') ORDER BY age_days DESC LIMIT 20;"
+
+For each row returned, call mcp__nanoclaw__escalate with:
+- severity: "urgent" if age_days < 30, "critical" if age_days >= 30
+- summary: "🚨 Complaint #<id> stuck <age_days>d — <customer_name> on <channel> (<business>)"
+- recommendation: a one-line suggested next action (e.g. "Call customer; offer partial refund" / "Close as no-action — too old"). Be conservative; default to "Brief Blayke and ask for direction".
+- options: ["call_customer", "refund_partial", "refund_full", "close_no_action", "other"]
+- customer_channel: <channel>
+
+If zero complaints are stuck >7 days, work silently — do NOT send a "nothing to report" ping.
+
+Do NOT attempt to resolve or contact the customer yourself — those are owner decisions per Decision Authority.',
+  'cron',
+  '0 8 * * 1-5',
+  'group',
+  datetime('now'),
+  'active',
+  datetime('now')
+);
+
+-- Stage 10: Mahindra one-shot brief (runs once on next eligible 9 AM CT)
+-- Andy reads each open Mahindra complaint and sends Blayke a separate WhatsApp
+-- brief per complaint so Blayke can decide live. After firing once, the task
+-- pauses itself (status=paused) — re-enable manually if Mahindra is reopened.
+
+INSERT OR REPLACE INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
+VALUES (
+  'mahindra-one-shot-brief',
+  'main',
+  '__scheduled__',
+  'One-shot brief on open Mahindra complaints. Run:
+
+sqlite3 /workspace/project/store/messages.db "SELECT id, customer_name, customer_jid, channel, category, business, created_at, ROUND(julianday(''now'')-julianday(created_at)) AS age_days, message_snippet FROM complaints WHERE resolution_status=''open'' AND (LOWER(customer_name) LIKE ''%mahindra%'' OR LOWER(message_snippet) LIKE ''%mahindra%'' OR LOWER(notes) LIKE ''%mahindra%'') ORDER BY created_at ASC;"
+
+For each row, send a SEPARATE WhatsApp message to the main group via mcp__nanoclaw__send_message. Format each as:
+
+📋 *Mahindra Complaint #<id>* (<age_days>d old)
+*Customer:* <customer_name>
+*Channel:* <channel>
+*Category:* <category>
+*Business:* <business>
+*Snippet:* "<message_snippet>"
+*Andy''s read:* <one-sentence assessment of severity + likely cause>
+*Suggested options:* <2-3 numbered options, e.g. 1) Refund $X, 2) Replacement, 3) No-action close>
+
+Wait for Blayke to reply per complaint with his decision (free text). Do NOT make any decisions yourself — this is owner-only territory per Decision Authority.
+
+After sending all briefs, send one final WhatsApp message to the main group: "📋 Mahindra brief complete — <N> complaints surfaced. Reply per complaint with direction."',
+  'once',
+  'manual',
+  'group',
+  datetime('now', '+1 minute'),
+  'active',
+  datetime('now')
+);
