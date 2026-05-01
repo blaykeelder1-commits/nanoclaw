@@ -32,6 +32,7 @@ function normalizeRow(row: ApolloRow): {
   firstName: string; lastName: string; email: string;
   company: string | null; title: string | null;
   linkedinUrl: string | null; phone: string | null;
+  industry: string | null;
 } {
   // Email — same in both formats
   const email = (row['Email'] || row['email'] || '').trim();
@@ -58,7 +59,11 @@ function normalizeRow(row: ApolloRow): {
   // Phone — "Phone" or "Number"
   const phone = (row['Phone'] || row['Number'] || row['phone'] || row['number'] || '').trim() || null;
 
-  return { firstName, lastName, email, company, title, linkedinUrl, phone };
+  // Industry — Apollo provides "Industry"; some sheets use "Vertical"
+  const industryRaw = (row['Industry'] || row['industry'] || row['Vertical'] || row['vertical'] || '').trim();
+  const industry = industryRaw ? industryRaw.toLowerCase().replace(/\s+/g, '_') : null;
+
+  return { firstName, lastName, email, company, title, linkedinUrl, phone, industry };
 }
 
 function parseCSV(content: string): ApolloRow[] {
@@ -196,8 +201,8 @@ async function main() {
   const tagList = tags ? JSON.stringify(tags.split(',').map((t) => t.trim())) : null;
 
   const stmt = db.prepare(
-    `INSERT INTO contacts (id, email, first_name, last_name, company, title, linkedin_url, phone, source, tags, notes, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'apollo', ?, NULL, ?, ?)
+    `INSERT INTO contacts (id, email, first_name, last_name, company, title, linkedin_url, phone, industry, source, tags, notes, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'apollo', ?, NULL, ?, ?)
      ON CONFLICT(email) DO UPDATE SET
        first_name = excluded.first_name,
        last_name = excluded.last_name,
@@ -205,6 +210,7 @@ async function main() {
        title = excluded.title,
        linkedin_url = COALESCE(excluded.linkedin_url, linkedin_url),
        phone = COALESCE(excluded.phone, phone),
+       industry = COALESCE(excluded.industry, industry),
        tags = excluded.tags,
        updated_at = excluded.updated_at`,
   );
@@ -230,6 +236,7 @@ async function main() {
         n.title,
         n.linkedinUrl,
         n.phone,
+        n.industry,
         tagList,
         now,
         now,
