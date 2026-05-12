@@ -60,6 +60,7 @@ function createSchema(): void {
     `ALTER TABLE bookings ADD COLUMN followup_sent_at TEXT`,
     `ALTER TABLE bookings ADD COLUMN license_photo TEXT NOT NULL DEFAULT ''`,
     `ALTER TABLE bookings ADD COLUMN delivery_address TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE bookings ADD COLUMN owner_notified_at TEXT NOT NULL DEFAULT ''`,
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }
@@ -180,6 +181,34 @@ export function getActiveBookings(): Booking[] {
     WHERE status IN ('pending', 'paid', 'confirmed')
     ORDER BY created_at DESC
   `).all() as any[];
+  return rows.map(rowToBooking);
+}
+
+// ── Owner-Notification Audit ────────────────────────────────────────
+
+/** Stamp that the owner has been successfully notified about this booking. */
+export function markOwnerNotified(id: string): void {
+  db.prepare('UPDATE bookings SET owner_notified_at = ?, updated_at = ? WHERE id = ?')
+    .run(new Date().toISOString(), new Date().toISOString(), id);
+}
+
+/**
+ * Find paid/confirmed bookings the owner has not been notified about yet.
+ * Window: older than `minAgeSeconds` (so we don't race the normal post-webhook
+ * send) AND newer than `maxAgeHours` (so a fresh deploy never resends ancient
+ * bookings whose column starts empty after migration).
+ */
+export function getUnnotifiedPaidBookings(minAgeSeconds = 120, maxAgeHours = 24): Booking[] {
+  const newerCutoff = new Date(Date.now() - minAgeSeconds * 1000).toISOString();
+  const olderCutoff = new Date(Date.now() - maxAgeHours * 3600 * 1000).toISOString();
+  const rows = db.prepare(`
+    SELECT * FROM bookings
+    WHERE status IN ('paid', 'confirmed')
+      AND owner_notified_at = ''
+      AND created_at < ?
+      AND created_at > ?
+    ORDER BY created_at ASC
+  `).all(newerCutoff, olderCutoff) as any[];
   return rows.map(rowToBooking);
 }
 

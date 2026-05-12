@@ -42,6 +42,8 @@ async function sendWithRetry(
       if (info.rejected && info.rejected.length > 0) {
         console.warn(`[email] Rejected recipients: ${info.rejected.join(', ')}`);
       }
+      const accepted = (info.accepted || []).length;
+      console.log(`[email] sent to=${mailOptions.to} subject="${mailOptions.subject}" accepted=${accepted}`);
       return;
     } catch (err: any) {
       lastError = err;
@@ -57,7 +59,11 @@ async function sendWithRetry(
 const FROM_NAME = 'Sheridan Rentals';
 
 function getOwnerEmail(): string {
-  return process.env.OWNER_EMAIL || 'sheridantrailerrentals@gmail.com';
+  // Comma-separated list supported; nodemailer accepts the raw string.
+  // Default points at the inbox the owner actually reads (snakgroupteam@snakgroup.biz)
+  // — never default to sheridantrailerrentals@gmail.com because its forwarder
+  // loops back to snakgroupteam, and Gmail silently drops the message.
+  return process.env.OWNER_EMAIL || 'snakgroupteam@snakgroup.biz';
 }
 
 function getFrom(): string {
@@ -74,7 +80,10 @@ export async function sendOwnerNotification(booking: Booking): Promise<void> {
     ? dates[0]
     : `${dates[0]} to ${dates[dates.length - 1]}`;
 
-  const statusLabel = booking.status === 'paid' ? 'DEPOSIT PAID' : 'PENDING PAYMENT';
+  const statusLabel =
+    booking.status === 'confirmed' ? 'PAID IN FULL'
+    : booking.status === 'paid'    ? 'DEPOSIT PAID'
+    :                                 'PENDING PAYMENT';
 
   await sendWithRetry(t, {
     from: getFrom(),

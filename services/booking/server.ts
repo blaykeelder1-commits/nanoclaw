@@ -25,12 +25,50 @@ import {
   getBookingByOrderId, updateBookingStatus, setCalendarEventId,
   hasOverlappingBooking, cancelBooking, getActiveBookings, getBookingsByEmail,
   expireStalePendingBookings, getBookedDatesFromDb, clearBalance, setLicensePhoto,
+  markOwnerNotified, getUnnotifiedPaidBookings,
 } from './db.js';
 import {
   sendOwnerNotification, sendCustomerConfirmation,
   sendPaymentReceivedNotification, sendCancellationConfirmation,
 } from './email.js';
-import type { AvailabilityRequest, CheckoutRequest, EquipmentKey } from './types.js';
+import type { AvailabilityRequest, Booking, CheckoutRequest, EquipmentKey } from './types.js';
+
+// ── Owner-Notification Coordinator ──────────────────────────────────
+
+/**
+ * IDs currently being sent an owner notification. Prevents the watchdog from
+ * racing the webhook (or itself) when a send is slow (Gmail throttling, etc.).
+ * Process-local; lost on restart, but the DB stamp is the canonical truth.
+ */
+const inFlightOwnerNotify = new Set<string>();
+
+/**
+ * Send the owner notification for a booking exactly once at a time.
+ * Stamps owner_notified_at on success. On send failure, leaves the row
+ * unstamped so the watchdog can retry on the next tick. On stamp failure
+ * (DB error), surfaces the error explicitly without re-marking — the email
+ * has already gone out, so the watchdog should NOT retry.
+ */
+async function notifyOwnerOnce(booking: Booking, source: 'webhook' | 'watchdog'): Promise<void> {
+  if (inFlightOwnerNotify.has(booking.id)) return;
+  inFlightOwnerNotify.add(booking.id);
+  try {
+    await sendOwnerNotification(booking);
+    try {
+      markOwnerNotified(booking.id);
+      console.log(`[${source}] Owner notified for ${booking.id}`);
+    } catch (e: any) {
+      // Email succeeded; DB stamp failed. Logging here is critical — otherwise
+      // the watchdog will resend every minute creating duplicate emails.
+      console.error(`[${source}] CRITICAL: markOwnerNotified failed for ${booking.id} after successful send: ${e.message}. Manually run UPDATE bookings SET owner_notified_at=datetime('now') WHERE id='${booking.id}' to silence watchdog.`);
+    }
+  } catch (err: any) {
+    const amountPaid = (booking.subtotal + booking.deposit - booking.balance).toFixed(2);
+    console.error(`[${source}] CRITICAL: Owner notification email failed for ${booking.id}: ${err.message}. Customer: ${booking.customer.firstName} ${booking.customer.lastName} ${booking.customer.phone} ${booking.customer.email}. Paid $${amountPaid} for ${booking.equipmentLabel} on ${booking.dates.join(',')}. Watchdog will retry every 60s.`);
+  } finally {
+    inFlightOwnerNotify.delete(booking.id);
+  }
+}
 
 // ── Config ──────────────────────────────────────────────────────────
 
@@ -449,9 +487,7 @@ async function handleSquareWebhook(req: http.IncomingMessage, res: http.ServerRe
     sendCustomerConfirmation(updatedBooking).catch(err =>
       console.error(`[webhook] CRITICAL: Customer confirmation email failed after retries: ${err.message}. Booking ${updatedBooking.id} — manual follow-up required.`),
     );
-    sendOwnerNotification(updatedBooking).catch(err =>
-      console.error(`[webhook] CRITICAL: Owner notification email failed after retries: ${err.message}. Booking ${updatedBooking.id} — manual follow-up required.`),
-    );
+    notifyOwnerOnce(updatedBooking, 'webhook');
 
   } catch (err: any) {
     console.error(`[webhook] Parse error: ${err.message}`);
@@ -905,6 +941,25 @@ function start(): void {
     const expired = expireStalePendingBookings(30);
     if (expired > 0) console.log(`[cleanup] Expired ${expired} stale pending booking(s)`)
   }, 5 * 60 * 1000);
+
+  // Watchdog: any paid/confirmed booking older than 2 minutes with no
+  // owner_notified_at stamp gets a retroactive owner notification.
+  // Guards against silent SMTP/forwarder failures — a paid booking can
+  // never go unnoticed for more than ~3 minutes.
+  let watchdogRunning = false;
+  setInterval(async () => {
+    if (watchdogRunning) return; // skip overlapping ticks
+    watchdogRunning = true;
+    try {
+      const unnotified = getUnnotifiedPaidBookings(120);
+      for (const b of unnotified) {
+        if (inFlightOwnerNotify.has(b.id)) continue; // webhook is already sending
+        await notifyOwnerOnce(b, 'watchdog');
+      }
+    } finally {
+      watchdogRunning = false;
+    }
+  }, 60 * 1000);
 
   // Graceful shutdown
   const shutdown = () => {
