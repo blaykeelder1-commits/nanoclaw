@@ -4,7 +4,14 @@
  * Adapted from nanoclaw/tools/email/send-email.ts
  */
 import { createTransport, type Transporter } from 'nodemailer';
-import type { Booking, PriceBreakdown } from './types.js';
+import type { Booking, EquipmentKey, PriceBreakdown } from './types.js';
+import { EQUIPMENT } from './pricing.js';
+
+/** "nights" for RV, "days" otherwise. Empty string if unknown equipment. */
+function unitLabel(booking: Booking): string {
+  const unit = EQUIPMENT[booking.equipment as EquipmentKey]?.unit || 'day';
+  return `${booking.numDays} ${unit}${booking.numDays > 1 ? 's' : ''}`;
+}
 
 let transporter: Transporter | null = null;
 
@@ -42,6 +49,8 @@ async function sendWithRetry(
       if (info.rejected && info.rejected.length > 0) {
         console.warn(`[email] Rejected recipients: ${info.rejected.join(', ')}`);
       }
+      const accepted = (info.accepted || []).length;
+      console.log(`[email] sent to=${mailOptions.to} subject="${mailOptions.subject}" accepted=${accepted}`);
       return;
     } catch (err: any) {
       lastError = err;
@@ -57,7 +66,11 @@ async function sendWithRetry(
 const FROM_NAME = 'Sheridan Rentals';
 
 function getOwnerEmail(): string {
-  return process.env.OWNER_EMAIL || 'sheridantrailerrentals@gmail.com';
+  // Comma-separated list supported; nodemailer accepts the raw string.
+  // Default points at the inbox the owner actually reads (snakgroupteam@snakgroup.biz)
+  // — never default to sheridantrailerrentals@gmail.com because its forwarder
+  // loops back to snakgroupteam, and Gmail silently drops the message.
+  return process.env.OWNER_EMAIL || 'snakgroupteam@snakgroup.biz';
 }
 
 function getFrom(): string {
@@ -74,7 +87,10 @@ export async function sendOwnerNotification(booking: Booking): Promise<void> {
     ? dates[0]
     : `${dates[0]} to ${dates[dates.length - 1]}`;
 
-  const statusLabel = booking.status === 'paid' ? 'DEPOSIT PAID' : 'PENDING PAYMENT';
+  const statusLabel =
+    booking.status === 'confirmed' ? 'PAID IN FULL'
+    : booking.status === 'paid'    ? 'DEPOSIT PAID'
+    :                                 'PENDING PAYMENT';
 
   await sendWithRetry(t, {
     from: getFrom(),
@@ -99,7 +115,7 @@ export async function sendOwnerNotification(booking: Booking): Promise<void> {
           <table style="font-size: 14px; color: #4b5563;">
             <tr><td style="padding: 2px 12px 2px 0; font-weight: 600;">Equipment:</td><td>${booking.equipmentLabel}</td></tr>
             <tr><td style="padding: 2px 12px 2px 0; font-weight: 600;">Dates:</td><td>${dateRange}</td></tr>
-            <tr><td style="padding: 2px 12px 2px 0; font-weight: 600;">Duration:</td><td>${booking.numDays} day${booking.numDays > 1 ? 's' : ''}</td></tr>
+            <tr><td style="padding: 2px 12px 2px 0; font-weight: 600;">Duration:</td><td>${unitLabel(booking)}</td></tr>
             ${booking.addOns.length > 0 ? `<tr><td style="padding: 2px 12px 2px 0; font-weight: 600;">Add-ons:</td><td>${booking.addOns.join(', ')}</td></tr>` : ''}
             ${booking.details ? `<tr><td style="padding: 2px 12px 2px 0; font-weight: 600;">Notes:</td><td>${escapeHtml(booking.details)}</td></tr>` : ''}
           </table>
@@ -173,7 +189,7 @@ export async function sendCustomerConfirmation(booking: Booking): Promise<void> 
             <table style="font-size: 14px; color: #4b5563; width: 100%;">
               <tr><td style="padding: 4px 0; font-weight: 600;">Equipment:</td><td>${booking.equipmentLabel}</td></tr>
               <tr><td style="padding: 4px 0; font-weight: 600;">Dates:</td><td>${dateRange}</td></tr>
-              <tr><td style="padding: 4px 0; font-weight: 600;">Duration:</td><td>${booking.numDays} day${booking.numDays > 1 ? 's' : ''}</td></tr>
+              <tr><td style="padding: 4px 0; font-weight: 600;">Duration:</td><td>${unitLabel(booking)}</td></tr>
               <tr><td style="padding: 4px 0; font-weight: 600; color: #16a34a;">Amount Paid:</td><td style="color: #16a34a;">$${amountPaid.toFixed(2)}</td></tr>
               ${balanceRow}
             </table>
@@ -214,7 +230,7 @@ export async function sendPaymentReceivedNotification(booking: Booking): Promise
         </div>
         <div style="background: #f9fafb; padding: 20px 24px; border: 1px solid #e5e7eb; border-top: none; font-size: 14px; color: #4b5563;">
           <p><strong>${booking.customer.firstName} ${booking.customer.lastName}</strong> paid $${(booking.balance > 0 ? booking.deposit : booking.subtotal + booking.deposit).toFixed(2)} for <strong>${booking.equipmentLabel}</strong>.</p>
-          <p>Dates: ${booking.dates[0]} to ${booking.dates[booking.dates.length - 1]} (${booking.numDays} day${booking.numDays > 1 ? 's' : ''})</p>
+          <p>Dates: ${booking.dates[0]} to ${booking.dates[booking.dates.length - 1]} (${unitLabel(booking)})</p>
           ${booking.balance > 0 ? `<p>Balance remaining: $${booking.balance.toFixed(2)} (due before pickup)</p>` : '<p>Fully paid — no balance remaining.</p>'}
           <p>Calendar event created. Customer confirmation email sent.</p>
           <p style="color: #9ca3af; font-size: 13px; margin-top: 16px;">Booking ID: ${booking.id}</p>

@@ -119,7 +119,7 @@ export async function createBookingEvent(
   equipmentKey: EquipmentKey,
   dates: string[],
   customer: Customer,
-  pricing: { subtotal: number; deposit: number; balance: number; addOns: string[] },
+  pricing: { subtotal: number; deposit: number; balance: number; addOns: string[]; numDays?: number },
 ): Promise<string> {
   const equipment = EQUIPMENT[equipmentKey];
   if (!equipment) throw new Error(`Unknown equipment: ${equipmentKey}`);
@@ -137,6 +137,11 @@ export async function createBookingEvent(
     ? `\nAdd-ons: ${pricing.addOns.join(', ')}`
     : '';
 
+  // numDays = billed units (nights for RV, days otherwise). Fall back to
+  // equipment-aware count for callers that don't pass it explicitly.
+  const billedUnits = pricing.numDays
+    ?? (equipmentKey === 'rv' ? Math.max(1, dates.length - 1) : Math.max(1, dates.length - 1));
+
   const cal = getCal();
   const res = await cal.events.insert({
     calendarId: equipment.calendarId,
@@ -147,7 +152,7 @@ export async function createBookingEvent(
         `Email: ${customer.email}`,
         `Phone: ${customer.phone}`,
         `Equipment: ${equipment.label}`,
-        `Duration: ${dates.length} ${equipment.unit}${dates.length > 1 ? 's' : ''}`,
+        `Duration: ${billedUnits} ${equipment.unit}${billedUnits > 1 ? 's' : ''}`,
         `Total: $${pricing.subtotal.toFixed(2)}`,
         `Deposit: $${pricing.deposit.toFixed(2)}`,
         `Balance due at pickup: $${pricing.balance.toFixed(2)}`,

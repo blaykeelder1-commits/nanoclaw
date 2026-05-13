@@ -260,20 +260,21 @@ describe('calculatePrice — RV holiday pricing', () => {
   });
 
   it('all-holiday dates use $175/night', () => {
-    // July 4th weekend 2035
+    // July 4th weekend 2035 — 3 selected dates = 2 nights (drop-off date is not a night)
     const dates = ['2035-07-03', '2035-07-04', '2035-07-05'];
-    const pricing = calculatePrice('rv', 3, [], { dates, paymentMode: 'full' });
-    expect(pricing.subtotal).toBe(175 * 3);
+    const pricing = calculatePrice('rv', 2, [], { dates, paymentMode: 'full' });
+    expect(pricing.subtotal).toBe(175 * 2);
     expect(pricing.lineItems[0].unitPrice).toBe(175);
     expect(pricing.lineItems[0].name).toContain('holiday');
   });
 
   it('mixed holiday + regular dates split into two line items', () => {
-    // Jul 4 (holiday) + Jul 6 (regular). Two line items.
-    const dates = ['2035-07-04', '2035-07-06'];
-    const pricing = calculatePrice('rv', 2, [], { dates, paymentMode: 'full' });
-    // 1 regular @ $150 + 1 holiday @ $175 = $325
-    expect(pricing.subtotal).toBe(150 + 175);
+    // 4 dates = 3 nights. Jul 4, 5 are holiday-nights. Jul 6 is a regular night.
+    // (Jul 7 is the drop-off morning, not a night.)
+    const dates = ['2035-07-04', '2035-07-05', '2035-07-06', '2035-07-07'];
+    const pricing = calculatePrice('rv', 3, [], { dates, paymentMode: 'full' });
+    // 1 regular @ $150 + 2 holiday @ $175 = $500
+    expect(pricing.subtotal).toBe(150 + 175 * 2);
     expect(pricing.lineItems).toHaveLength(2);
     expect(pricing.lineItems.some(li => li.unitPrice === 150)).toBe(true);
     expect(pricing.lineItems.some(li => li.unitPrice === 175)).toBe(true);

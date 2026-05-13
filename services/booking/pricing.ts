@@ -215,12 +215,16 @@ export function calculatePrice(
   const lineItems: LineItem[] = [];
   const baseRate = promo?.rate ?? equipment.rate;
 
-  // RV: per-date holiday pricing when no promo is applied.
+  // RV: per-night holiday pricing when no promo is applied.
   // With a promo, the promo's flat rate overrides everything.
-  if (equipmentKey === 'rv' && opts?.dates && opts.dates.length > 0 && !promo) {
+  // A "night" is the gap between two consecutive selected dates — the last
+  // selected date is the drop-off-out morning, not a night. So holiday detection
+  // runs on dates[0 .. n-2], which matches numDays (= dates.length - 1 for RV).
+  if (equipmentKey === 'rv' && opts?.dates && opts.dates.length > 1 && !promo) {
     let regularCount = 0;
     let holidayCount = 0;
-    for (const d of opts.dates) {
+    const nightDates = opts.dates.slice(0, -1);
+    for (const d of nightDates) {
       if (isHoliday(d)) holidayCount++;
       else regularCount++;
     }
