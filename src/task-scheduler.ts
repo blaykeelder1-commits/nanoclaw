@@ -23,11 +23,13 @@ import {
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
+  bumpConsecutiveFailures,
   getAllTasks,
   getDailySpendUsd,
   getDueTasks,
   getTaskById,
   logTaskRun,
+  resetConsecutiveFailures,
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
@@ -59,6 +61,15 @@ function alertMainGroup(deps: SchedulerDependencies, message: string): void {
       return;
     }
   }
+}
+
+const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 3;
+
+// Errors that always page the main group on first occurrence (credit/quota exhaustion).
+const URGENT_ERROR_PATTERN = /credit balance|not enough credits|insufficient.{0,15}credit|quota.{0,15}exceeded|enough prepaid/i;
+
+function isUrgentError(error: string | null): boolean {
+  return !!error && URGENT_ERROR_PATTERN.test(error);
 }
 
 async function runTask(
@@ -150,13 +161,14 @@ async function runTask(
           'CLI agent failed',
         );
 
-        // Only fall back to container if explicitly enabled (default: OFF to prevent silent credit burn)
+        // Only fall back to container if explicitly enabled (default: OFF to prevent silent credit burn).
+        // Per-attempt notification is intentionally suppressed here; the consolidated alert below
+        // fires only on consecutive failures or urgent (credit/quota) errors.
         if (CLI_FALLBACK_ENABLED) {
           logger.warn(
             { taskId: task.id, event: 'cli_fallback_triggered', reason: error },
             'CLI failed — falling back to container (API credits will be consumed)',
           );
-          alertMainGroup(deps, `⚠️ CLI failed for task "${task.id}" — falling back to container (API credits being used). Reason: ${error}`);
           error = null;
           await runTaskViaContainer(task, group, isMain, deps, startTime, (r, e) => {
             result = r;
@@ -167,7 +179,6 @@ async function runTask(
             { taskId: task.id, event: 'cli_fallback_blocked', reason: error },
             'CLI failed and CLI_FALLBACK_ENABLED=false — task SKIPPED to prevent credit burn. Fix CLI setup or set CLI_FALLBACK_ENABLED=true.',
           );
-          alertMainGroup(deps, `🚨 Task "${task.id}" FAILED and was skipped (no container fallback). Error: ${error}`);
         }
       } else if (cliOutput.result) {
         result = cliOutput.result;
@@ -185,13 +196,13 @@ async function runTask(
       error = err instanceof Error ? err.message : String(err);
       logger.error({ taskId: task.id, error, mode: 'cli' }, 'CLI task failed');
 
-      // Only fall back to container if explicitly enabled
+      // Only fall back to container if explicitly enabled. Per-attempt notification suppressed;
+      // the consolidated alert below handles user-facing reporting.
       if (CLI_FALLBACK_ENABLED) {
         logger.warn(
           { taskId: task.id, event: 'cli_fallback_triggered', reason: error },
           'CLI exception — falling back to container (API credits will be consumed)',
         );
-        alertMainGroup(deps, `⚠️ CLI exception for task "${task.id}" — falling back to container (API credits being used). Error: ${error}`);
         error = null;
         try {
           await runTaskViaContainer(task, group, isMain, deps, startTime, (r, e) => {
@@ -207,7 +218,6 @@ async function runTask(
           { taskId: task.id, event: 'cli_fallback_blocked', reason: error },
           'CLI exception and CLI_FALLBACK_ENABLED=false — task SKIPPED to prevent credit burn.',
         );
-        alertMainGroup(deps, `🚨 Task "${task.id}" FAILED and was skipped (no container fallback). Error: ${error}`);
       }
     }
   } else {
@@ -230,7 +240,26 @@ async function runTask(
   });
 
   if (error) {
-    alertMainGroup(deps, `🚨 Scheduled task "${task.id}" (${task.group_folder}) failed: ${error}`);
+    const failures = bumpConsecutiveFailures(task.id);
+    const urgent = isUrgentError(error);
+    if (urgent || failures >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD) {
+      const reason = urgent ? 'urgent (credit/quota)' : `${failures} consecutive failures`;
+      logger.warn(
+        { taskId: task.id, failures, urgent, error },
+        'Emitting consolidated failure alert to main group',
+      );
+      alertMainGroup(
+        deps,
+        `🚨 Scheduled task "${task.id}" (${task.group_folder}) — ${reason}. Error: ${error.slice(0, 400)}`,
+      );
+    } else {
+      logger.info(
+        { taskId: task.id, failures, error },
+        'Task failed but below alert threshold — staying silent',
+      );
+    }
+  } else {
+    resetConsecutiveFailures(task.id);
   }
 
   let nextRun: string | null = null;

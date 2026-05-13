@@ -335,6 +335,13 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN consecutive_failures INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
 
   // Add model column to usage_log for model-specific cost tracking
   try {
@@ -837,6 +844,29 @@ export function updateTaskAfterRun(
     WHERE id = ?
   `,
   ).run(nextRun, now, lastResult, nextRun, id);
+}
+
+/**
+ * Increment consecutive_failures for a task and return the new count.
+ * Called after a scheduled task fails.
+ */
+export function bumpConsecutiveFailures(id: string): number {
+  db.prepare(
+    `UPDATE scheduled_tasks SET consecutive_failures = COALESCE(consecutive_failures, 0) + 1 WHERE id = ?`,
+  ).run(id);
+  const row = db
+    .prepare(`SELECT consecutive_failures FROM scheduled_tasks WHERE id = ?`)
+    .get(id) as { consecutive_failures: number } | undefined;
+  return row?.consecutive_failures ?? 0;
+}
+
+/**
+ * Reset consecutive_failures to 0 for a task. Called after a successful run.
+ */
+export function resetConsecutiveFailures(id: string): void {
+  db.prepare(
+    `UPDATE scheduled_tasks SET consecutive_failures = 0 WHERE id = ? AND COALESCE(consecutive_failures, 0) > 0`,
+  ).run(id);
 }
 
 export function logTaskRun(log: TaskRunLog): void {
