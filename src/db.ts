@@ -2085,6 +2085,60 @@ export function getExperimentStatus() {
   ).all() as Array<{ category: string; variant_name: string; times_used: number; times_converted: number; times_replied: number; status: string; conversion_pct: number; reply_pct: number }>;
 }
 
+/**
+ * Daily digest stats: run counts and active failure streaks for the daily health digest.
+ * `dayStart` and `dayEnd` are ISO timestamps bounding the reporting window (yesterday).
+ */
+export function getDigestStats(dayStart: string, dayEnd: string): {
+  totalRuns: number;
+  successes: number;
+  errors: number;
+  errorsByGroup: Record<string, number>;
+  activeFailures: Array<{ task_id: string; group_folder: string; consecutive_failures: number; last_error: string | null; last_run: string | null }>;
+} {
+  const totals = db
+    .prepare(
+      `SELECT status, COUNT(*) AS n FROM task_run_logs WHERE run_at >= ? AND run_at < ? GROUP BY status`,
+    )
+    .all(dayStart, dayEnd) as Array<{ status: string; n: number }>;
+  let successes = 0;
+  let errors = 0;
+  for (const r of totals) {
+    if (r.status === 'success') successes += r.n;
+    else errors += r.n;
+  }
+
+  const byGroupRows = db
+    .prepare(
+      `SELECT s.group_folder AS g, COUNT(*) AS n
+       FROM task_run_logs r
+       LEFT JOIN scheduled_tasks s ON s.id = r.task_id
+       WHERE r.run_at >= ? AND r.run_at < ? AND r.status = 'error'
+       GROUP BY s.group_folder`,
+    )
+    .all(dayStart, dayEnd) as Array<{ g: string | null; n: number }>;
+  const errorsByGroup: Record<string, number> = {};
+  for (const r of byGroupRows) errorsByGroup[r.g || '(unknown)'] = r.n;
+
+  const activeFailures = db
+    .prepare(
+      `SELECT id AS task_id, group_folder, consecutive_failures, last_result AS last_error, last_run
+       FROM scheduled_tasks
+       WHERE status = 'active' AND COALESCE(consecutive_failures, 0) > 0
+       ORDER BY consecutive_failures DESC, last_run DESC
+       LIMIT 5`,
+    )
+    .all() as Array<{ task_id: string; group_folder: string; consecutive_failures: number; last_error: string | null; last_run: string | null }>;
+
+  return {
+    totalRuns: successes + errors,
+    successes,
+    errors,
+    errorsByGroup,
+    activeFailures,
+  };
+}
+
 /** Get task failure streaks for self-healing detection */
 export function getTaskFailureStreaks(minStreak: number = 3) {
   // Find tasks where the last N runs were all errors

@@ -19,6 +19,7 @@ import { WhatsAppChannel } from './channels/whatsapp.js';
 import { expirePendingBookings } from './square-payments.js';
 import {
   getDailySpendUsd,
+  getDigestStats,
   getDueTasks,
   getHealthState,
   getLastMessageTimestamp,
@@ -574,6 +575,108 @@ async function runHealthCheck(deps: HealthMonitorDeps): Promise<void> {
   }
 }
 
+/**
+ * Build and send the daily Andy health digest to the main group. Runs once a day at 8 AM CT.
+ * Deterministic (no LLM in the loop) — just queries the DB and posts a single consolidated
+ * message so Blayke can see overnight health at a glance.
+ */
+async function runDailyDigest(deps: HealthMonitorDeps): Promise<void> {
+  // Reporting window: yesterday 00:00 CT → today 00:00 CT, expressed in UTC ISO strings.
+  const now = new Date();
+  const chicagoToday = new Date(now.toLocaleString('en-US', { timeZone: TIMEZONE }));
+  chicagoToday.setHours(0, 0, 0, 0);
+  const chicagoYesterday = new Date(chicagoToday);
+  chicagoYesterday.setDate(chicagoYesterday.getDate() - 1);
+
+  // Convert Chicago-local boundaries back to absolute UTC instants.
+  const offsetMs = chicagoToday.getTime() - new Date(chicagoToday.toLocaleString('en-US', { timeZone: 'UTC' })).getTime();
+  const dayStart = new Date(chicagoYesterday.getTime() - offsetMs).toISOString();
+  const dayEnd = new Date(chicagoToday.getTime() - offsetMs).toISOString();
+
+  const stats = getDigestStats(dayStart, dayEnd);
+  const successRate = stats.totalRuns > 0 ? Math.round((stats.successes / stats.totalRuns) * 100) : 100;
+  const dateLabel = chicagoYesterday.toLocaleDateString('en-US', { timeZone: TIMEZONE, month: 'short', day: 'numeric' });
+
+  // Env-var gap check (silent if all set)
+  const envGaps: string[] = [];
+  for (const key of ['TWITTER_BEARER_TOKEN', 'GBP_ACCOUNT_ID', 'GBP_LOCATION_ID_SHERIDAN']) {
+    if (!process.env[key]) envGaps.push(key);
+  }
+
+  // OAuth credentials age
+  let credAgeNote = '';
+  try {
+    const home = process.env.HOME || require('os').homedir();
+    const credsStat = fs.statSync(path.join(home, '.claude', '.credentials.json'));
+    const ageDays = Math.round((Date.now() - credsStat.mtimeMs) / (1000 * 60 * 60 * 24));
+    if (ageDays >= 20) credAgeNote = `\n• OAuth credentials ${ageDays}d old — refresh soon`;
+  } catch { /* non-critical */ }
+
+  // Compose message — one block, scannable in 5 seconds.
+  const lines: string[] = [];
+  lines.push(`*Andy daily — ${dateLabel}*`);
+  lines.push('');
+  lines.push(`• Tasks: ${stats.successes}/${stats.totalRuns} succeeded (${successRate}%)`);
+
+  if (stats.errors > 0) {
+    const groupBreakdown = Object.entries(stats.errorsByGroup)
+      .map(([g, n]) => `${g}=${n}`)
+      .join(', ');
+    lines.push(`• Errors yesterday: ${stats.errors} (${groupBreakdown})`);
+  }
+
+  if (stats.activeFailures.length > 0) {
+    lines.push('');
+    lines.push('*Active failure streaks:*');
+    for (const f of stats.activeFailures) {
+      const errSnippet = (f.last_error || '').replace(/\n/g, ' ').slice(0, 120);
+      lines.push(`• \`${f.task_id}\` (${f.group_folder}) — ${f.consecutive_failures}× consecutive: ${errSnippet}`);
+    }
+  } else if (stats.errors === 0) {
+    lines.push('• No active failure streaks — system clean');
+  }
+
+  if (envGaps.length > 0) {
+    lines.push('');
+    lines.push(`*Config gaps:* ${envGaps.join(', ')} not set in .env`);
+  }
+
+  if (credAgeNote) lines.push(credAgeNote.trim());
+
+  const message = lines.join('\n');
+  const mainJid = deps.getMainGroupJid();
+  if (!mainJid) {
+    logger.warn('Daily digest: no main group JID — skipping send');
+    return;
+  }
+  try {
+    await deps.sendAlert(mainJid, message);
+    logger.info({ successes: stats.successes, errors: stats.errors, activeFailures: stats.activeFailures.length }, 'Daily digest sent');
+  } catch (err) {
+    logger.error({ err }, 'Failed to send daily digest');
+  }
+}
+
+/** Compute ms until the next 8:00 AM America/Chicago, returning a positive delta. */
+function msUntilNext8amChicago(): number {
+  const now = new Date();
+  const chicagoNow = new Date(now.toLocaleString('en-US', { timeZone: TIMEZONE }));
+  const target = new Date(chicagoNow);
+  target.setHours(8, 0, 0, 0);
+  if (target <= chicagoNow) target.setDate(target.getDate() + 1);
+  return target.getTime() - chicagoNow.getTime();
+}
+
+function scheduleNextDigest(deps: HealthMonitorDeps): void {
+  const delay = msUntilNext8amChicago();
+  logger.info({ nextRunIn: `${(delay / 3600000).toFixed(1)}h` }, 'Scheduled daily Andy digest at 8:00 AM CT');
+  setTimeout(() => {
+    runDailyDigest(deps)
+      .catch((err) => logger.error({ err }, 'Daily digest error'))
+      .finally(() => scheduleNextDigest(deps));
+  }, delay);
+}
+
 export function startHealthMonitor(deps: HealthMonitorDeps): void {
   logger.info({ intervalMs: HEALTH_CHECK_INTERVAL }, 'Starting health monitor');
 
@@ -601,6 +704,9 @@ export function startHealthMonitor(deps: HealthMonitorDeps): void {
       logger.error({ err }, 'Health check error'),
     );
   }, HEALTH_CHECK_INTERVAL);
+
+  // Daily Andy digest: one consolidated health/activity message at 8 AM CT
+  scheduleNextDigest(deps);
 
   // Daily maintenance: prune old logs and clean up container log files
   const MAINTENANCE_INTERVAL = 24 * 60 * 60 * 1000; // 24h
