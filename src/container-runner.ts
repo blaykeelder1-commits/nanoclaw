@@ -289,11 +289,17 @@ const SECRETS_SOCIAL = [
   'LINKEDIN_PERSON_URN',
 ] as const;
 
-// Vending platform (IDDI)
+// Vending platforms (IDDI + HahaVending + Vendera). Grouped under `iddi` scope so any
+// group that needs vending automation gets all three platform logins in one toggle.
 const SECRETS_IDDI = [
   'IDDI_BASE_URL',
+  'IDDI_BACKEND_URL',
   'IDDI_EMAIL',
   'IDDI_PASSWORD',
+  'HAHA_EMAIL',
+  'HAHA_PASSWORD',
+  'VENDERA_EMAIL',
+  'VENDERA_PASSWORD',
 ] as const;
 
 // Lead generation & cold outreach
