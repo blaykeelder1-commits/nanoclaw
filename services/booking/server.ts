@@ -522,7 +522,7 @@ async function handleSquareWebhook(req: http.IncomingMessage, res: http.ServerRe
 // ── File Uploads (License + Inspection Photos) ──────────────────────
 
 const UPLOAD_DIR = path.join(process.cwd(), 'data', 'uploads');
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB — iPhone HEIC + portrait photos can exceed 10MB
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
 const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif']);
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
@@ -613,7 +613,12 @@ async function handleUpload(req: http.IncomingMessage, res: http.ServerResponse)
 
   const { fields, file } = parsed;
   if (!file) { json(res, 400, { error: 'No file uploaded' }); return; }
-  if (!ALLOWED_IMAGE_TYPES.has(file.contentType)) {
+  // Some mobile browsers strip Content-Type or send application/octet-stream for HEIC.
+  // Accept if either the MIME or the file extension is a known image format.
+  const uploadedExt = path.extname(file.name).toLowerCase();
+  const typeOk = ALLOWED_IMAGE_TYPES.has(file.contentType);
+  const extOk = ALLOWED_EXTENSIONS.has(uploadedExt);
+  if (!typeOk && !extOk) {
     json(res, 400, { error: 'Unsupported image type. Use JPEG, PNG, WebP, or HEIC.' });
     return;
   }
