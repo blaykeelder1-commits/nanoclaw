@@ -177,7 +177,7 @@ async function getBackendToken(): Promise<string> {
 
   const res = await fetchRetry(`${BACKEND_URL}/api/auth/vendor/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Origin': 'https://vending-front-end.vercel.app' },
     body: JSON.stringify({ email: EMAIL, password: PASSWORD }),
   });
 
