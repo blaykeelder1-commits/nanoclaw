@@ -208,14 +208,14 @@ async function backendApiGet(endpoint: string, params?: Record<string, string>):
   }
 
   const res = await fetchRetry(url.toString(), {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Authorization: `Bearer ${token}`, 'Origin': 'https://vending-front-end.vercel.app' },
   });
 
   if (res.status === 401) {
     if (fs.existsSync(BACKEND_TOKEN_FILE)) fs.unlinkSync(BACKEND_TOKEN_FILE);
     const newToken = await getBackendToken();
     const retry = await fetchRetry(url.toString(), {
-      headers: { Authorization: `Bearer ${newToken}` },
+      headers: { Authorization: `Bearer ${newToken}`, 'Origin': 'https://vending-front-end.vercel.app' },
     });
     if (!retry.ok) throw new Error(`IDDI backend API error: ${retry.status} ${await retry.text()}`);
     return retry.json();

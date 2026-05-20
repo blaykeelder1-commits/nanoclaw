@@ -127,12 +127,17 @@ function getAuth(): InstanceType<typeof google.auth.GoogleAuth> {
 
 function getEnvIds(): { accountId: string; locationId: string } {
   const accountId = process.env.GBP_ACCOUNT_ID;
-  const locationId = process.env.GBP_LOCATION_ID;
+  const business = (process.env.GBP_BUSINESS || '').toUpperCase();
+  const locationId =
+    process.env.GBP_LOCATION_ID ||
+    (business && process.env[`GBP_LOCATION_ID_${business}`]) ||
+    process.env.GBP_LOCATION_ID_SNAK ||
+    process.env.GBP_LOCATION_ID_SHERIDAN;
 
   if (!accountId || !locationId) {
     console.error(JSON.stringify({
       status: 'error',
-      error: 'Missing GBP_ACCOUNT_ID and/or GBP_LOCATION_ID environment variables.',
+      error: 'Missing GBP_ACCOUNT_ID and/or GBP_LOCATION_ID environment variables. Set GBP_BUSINESS=SNAK or SHERIDAN, or set GBP_LOCATION_ID directly.',
     }));
     process.exit(1);
   }
