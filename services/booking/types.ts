@@ -105,8 +105,53 @@ export interface Booking {
   agentInitiated: boolean;
   /** Timestamp the post-payment license-upload SMS went out, or '' if never sent. */
   licenseSmsSentAt: string;
+  /** AG-XXXXXXXXXXXXXXXX id of the signed rental agreement, or '' if not signed yet. */
+  agreementId: string;
+  /** Unguessable token used in the /sign/:bookingId/:signToken URL (Andy's flow). */
+  signToken: string;
+  /** Timestamp the agent sent the sign-agreement SMS, or '' if never sent. */
+  agreementSmsSentAt: string;
+  /** JSON snapshot of the pricing object used at booking time. Lets the agent-payment-link
+   *  endpoint recreate the Square payment link without re-validating dates / promo codes. */
+  pricingSnapshot: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// ── Rental Agreement ────────────────────────────────────────────────
+
+export type AgreementKind = 'sheridan-rv' | 'sheridan-hauler' | 'sheridan-landscaping';
+
+export interface Agreement {
+  id: string;
+  /** Empty for pre-booking (web-form) rows until /api/checkout links them. */
+  bookingId: string;
+  /** One-time token used by web form to bind sign step → checkout. Empty for Andy-flow rows. */
+  agreementToken: string;
+  kind: AgreementKind;
+  version: string;
+  contentHash: string;
+  signerName: string;
+  signerEmail: string;
+  /** Base64 dataURL of the canvas signature. */
+  signaturePng: string;
+  signerIp: string;
+  signerUa: string;
+  signedAt: string;
+}
+
+export interface AgreementContext {
+  bookingId: string;
+  equipmentLabel: string;
+  customerName: string;
+  customerEmail: string;
+  dates: string[];
+  numDays: number;
+  unit: 'night' | 'day';
+  deposit: number;
+  total: number;
+  deliveryAddress: string;
+  hasDelivery: boolean;
 }
 
 export interface AgentCheckoutRequest {

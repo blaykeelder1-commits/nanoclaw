@@ -127,6 +127,8 @@ export async function sendOwnerNotification(booking: Booking): Promise<void> {
             <tr><td style="padding: 2px 0;">Balance at pickup:</td><td style="text-align: right;">$${booking.balance.toFixed(2)}</td></tr>
           </table>
 
+          ${agreementLinkRow(booking)}
+
           <p style="margin: 16px 0 0; font-size: 13px; color: #9ca3af;">
             Booking ID: ${booking.id} | Created: ${new Date(booking.createdAt).toLocaleString('en-US', { timeZone: 'America/Chicago' })}
           </p>
@@ -204,6 +206,8 @@ export async function sendCustomerConfirmation(booking: Booking): Promise<void> 
             Questions? Reply to this email or text us — we're always available.
           </p>
 
+          ${agreementLinkRow(booking)}
+
           <p style="font-size: 13px; color: #9ca3af; margin-top: 24px; padding-top: 16px; border-top: 1px solid #e5e7eb;">
             Booking ID: ${booking.id}<br>
             Sheridan Trailer Rentals — Tomball, TX
@@ -212,6 +216,16 @@ export async function sendCustomerConfirmation(booking: Booking): Promise<void> 
       </div>
     `,
   });
+}
+
+function agreementLinkRow(booking: Booking): string {
+  if (!booking.agreementId) return '';
+  const base = process.env.BOOKING_PUBLIC_BASE_URL || 'https://chat.sheridantrailerrentals.us';
+  const url = `${base}/api/agreements/${booking.agreementId}`;
+  return `
+    <p style="font-size: 13px; color: #4b5563; margin-top: 14px; padding-top: 14px; border-top: 1px solid #e5e7eb;">
+      <strong>Signed rental agreement:</strong> <a href="${url}" style="color: #0e7490;">${url}</a>
+    </p>`;
 }
 
 // ── Payment Received Notification (to owner) ────────────────────────

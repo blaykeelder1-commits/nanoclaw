@@ -1,7 +1,7 @@
 ---
 name: booking-close
-description: Close a Sheridan Trailer Rentals booking inside the chat conversation — create the booking, generate a Square payment link, and send the customer one SMS with the payment URL + a post-payment license-upload URL. Use this instead of telling the customer to "go to the website form."
-allowed-tools: Bash(npx tsx /workspace/project/tools/booking/create-booking.ts *), Bash(npx tsx /home/nanoclaw/nanoclaw/tools/booking/create-booking.ts *), Bash(npx tsx /workspace/project/tools/calendar/calendar.ts *), Bash(npx tsx /home/nanoclaw/nanoclaw/tools/calendar/calendar.ts *)
+description: Close a Sheridan Trailer Rentals booking inside the chat conversation. The new flow is license → signed agreement → payment, in that order. Andy creates the booking, sends the customer two links (license upload + agreement signing), then mints the Square payment link once both are received. Use this instead of telling the customer to "go to the website form."
+allowed-tools: Bash(npx tsx /workspace/project/tools/booking/create-booking.ts *), Bash(npx tsx /home/nanoclaw/nanoclaw/tools/booking/create-booking.ts *), Bash(npx tsx /workspace/project/tools/booking/mint-payment-link.ts *), Bash(npx tsx /home/nanoclaw/nanoclaw/tools/booking/mint-payment-link.ts *), Bash(curl -sS https://chat.sheridantrailerrentals.us/api/booking/* *), Bash(npx tsx /workspace/project/tools/calendar/calendar.ts *), Bash(npx tsx /home/nanoclaw/nanoclaw/tools/calendar/calendar.ts *)
 ---
 
 # Closing a Sheridan Booking In-Chat
@@ -19,28 +19,33 @@ If any of the above is missing, do NOT use this skill — keep gathering info (o
 
 ## What this skill does
 
-1. Checks calendar availability for the requested dates.
-2. Calls `tools/booking/create-booking.ts` to create a `pending` booking row and a Square hosted payment link.
-3. Returns: `bookingId`, `paymentUrl`, `licenseUploadUrl`, `pricing`.
-4. The agent then sends ONE message to the customer on their original channel with the payment URL and a short note about the post-payment license-upload step.
+The flow has THREE customer-touchpoints, in this order. **Never skip ahead.**
+
+1. **Create booking** → call `tools/booking/create-booking.ts`. Server creates a `pending` row, mints a `sign_token`, returns `bookingId`, `licenseUploadUrl`, `signUrl`. **No Square payment link is created yet.**
+2. **Send the customer license + agreement URLs** in one message on their original channel.
+3. **Check status before minting** → call `GET /api/booking/:bookingId`. When `readyToPay === true` (i.e. `licenseUploaded && agreementSigned`), call `tools/booking/mint-payment-link.ts --booking <id>` to mint the Square link and send it to the customer.
+
+The server independently enforces the gate — `mint-payment-link` returns 412 if either step is missing. **Do not retry on 412**: tell the customer which step is still pending.
 
 ## Inputs you must collect first
 
-Before calling the tool, get these from the customer:
+Before calling create-booking, get these from the customer:
 
 | Field | Notes |
 |---|---|
 | `equipment` | `rv`, `carhauler`, or `landscaping`. Confirm explicitly. |
 | `dates` | Sorted list of `YYYY-MM-DD`. RV requires ≥ 2 dates (pickup + drop-off). Same-day for car hauler/landscaping is OK (single date = 1 day). |
 | `first-name` + `last-name` | If only one name given, ask for the other. Don't guess. |
-| `phone` | E.164 (`+15551234567`) or 10-digit US — the post-payment license SMS goes here. |
-| `email` | Required for the Square receipt + confirmation. |
+| `phone` | E.164 (`+15551234567`) or 10-digit US — used for the license/agreement reminder SMS. |
+| `email` | Required for Square receipt + confirmation. |
 | `delivery-address` | Required for RV. Use the customer's stated drop-off address. If they want pickup-only, ask about the RIVER promo (escalate if novel). |
 | `add-ons` | `delivery` is implied for RV. `generator` if mentioned. |
 | `payment-mode` | `deposit` for RV booked > 1 week out; `full` otherwise. Confirm with the customer if there's ambiguity. |
 | `promo` | Only if customer named one (e.g. RIVER). Never invent. |
 
 ## How to call
+
+### Step 1 — Create the booking
 
 ```bash
 npx tsx /workspace/project/tools/booking/create-booking.ts \
@@ -53,36 +58,70 @@ npx tsx /workspace/project/tools/booking/create-booking.ts \
   --payment-mode deposit
 ```
 
-(In CLI mode the path is `/home/nanoclaw/nanoclaw/tools/booking/create-booking.ts` — the runtime swaps it.)
+(CLI mode swaps to `/home/nanoclaw/nanoclaw/tools/booking/create-booking.ts`.)
 
-## Output to expect
+Expected response:
 
 ```json
 {
   "status": "success",
   "bookingId": "SR-A1B2C3D4",
-  "paymentUrl": "https://square.link/u/...",
   "licenseUploadUrl": "https://chat.sheridantrailerrentals.us/license/SR-A1B2C3D4",
+  "signUrl": "https://chat.sheridantrailerrentals.us/sign/SR-A1B2C3D4/<token>",
   "pricing": { "subtotal": 825, "deposit": 250, "balance": 575, "chargeNow": 575, "paymentMode": "deposit", "lineItems": [...] }
 }
 ```
 
-If `status: "error"`, do NOT improvise. Send the customer a short "let me check on that and get right back to you" and call `mcp__nanoclaw__escalate` with the full error and your recommendation.
+If `status: "error"`, do NOT improvise — send "let me check on that and get right back to you" and call `mcp__nanoclaw__escalate` with the full error.
 
-## Sending the customer message
+### Step 2 — Send the customer license + sign URLs (one message)
 
-After a successful response, send **ONE** message on the customer's original channel with:
+On the customer's original channel:
 
-- A one-line confirmation of equipment + dates
-- The `paymentUrl`
-- A one-line note that they'll get a license-upload link by SMS after payment
-- Total + what they'll be charged today
+> Booked you in for **RV camper, July 4–6, delivery to 1234 Lake Rd**. Two quick things before payment — both take 30 seconds:
+>
+> 1. Driver's license photo: `<licenseUploadUrl>`
+> 2. Sign your rental agreement: `<signUrl>`
+>
+> Once both are done I'll send you the secure payment link. Total $825 ($250 deposit due today).
 
-Example (SMS):
+Keep it 3–5 sentences. No marketing fluff. Phrase it warmly but tightly.
 
-> Booked: RV camper July 4–6, delivery to 1234 Lake Rd. Total $825 ($250 deposit due today). Pay here: <paymentUrl> — once Square confirms, we'll text you a 1-tap link to upload your driver's license.
+### Step 3 — Check status when the customer comes back
 
-Keep it 2–4 sentences. No marketing fluff.
+When the customer responds (any text, or replies "done"), check status:
+
+```bash
+curl -sS https://chat.sheridantrailerrentals.us/api/booking/SR-A1B2C3D4
+```
+
+Look at the response:
+
+| Field | Meaning | What to do |
+|---|---|---|
+| `licenseUploaded: false` | License not yet uploaded | Re-send `licenseUploadUrl` only |
+| `agreementSigned: false` | Agreement not yet signed | Re-send `signUrl` only |
+| `readyToPay: true` | Both done — mint the Square link | Proceed to Step 4 |
+| `status: "paid"` or `"confirmed"` | Customer already paid | Acknowledge and close |
+| `status: "cancelled"` | Pending booking expired (>30 min) | Tell the customer; escalate if they still want it |
+
+### Step 4 — Mint the payment link and send it
+
+```bash
+npx tsx /workspace/project/tools/booking/mint-payment-link.ts --booking SR-A1B2C3D4
+```
+
+Expected response:
+
+```json
+{ "status": "success", "paymentUrl": "https://square.link/u/...", "orderId": "..." }
+```
+
+Send the customer one message:
+
+> Got your license and signed agreement — thanks. Here's your secure payment link: `<paymentUrl>` — total $825 ($250 due today).
+
+If `mint-payment-link` returns `error: "license_missing"` or `"agreement_missing"`, **do not bypass it**. Tell the customer specifically what's still pending and re-send the matching URL.
 
 ## After payment lands
 
@@ -91,9 +130,8 @@ You don't need to do anything. The booking service's Square webhook handles:
 - Google Calendar event creation
 - Customer confirmation email
 - Owner notification email
-- **License-upload SMS** to the customer's phone (only fires on agent-initiated bookings without a license on file)
 
-The customer uploads via the `licenseUploadUrl` and the booking is fully fulfilled.
+The customer's signed rental agreement is included in both confirmation emails as a public read-only link (`/api/agreements/<AG-...>`).
 
 ## What to escalate (do NOT close in-chat)
 
@@ -107,8 +145,8 @@ Per `/workspace/global/authority.md`:
 - Any equipment damage / complaint thread
 - Customer asking to speak to Blayke directly (escalate AND keep the conversation warm)
 
-Escalate via `mcp__nanoclaw__escalate` with severity, summary, recommendation, and the chat context.
+Escalate via `mcp__nanoclaw__escalate` with severity, summary, recommendation, and chat context.
 
 ## Logging
 
-After a successful close, append one line to `groups/sheridan-rentals/lessons.md` under `## Conversion & Sales` capturing the pattern you used (channel → dates → close time). This builds the muscle so Phase 1 evals can graduate the pattern to fully auto-act if it stays clean.
+After a successful close, append one line to `groups/sheridan-rentals/lessons.md` under `## Conversion & Sales` capturing the pattern you used (channel → dates → time-to-license → time-to-sign → close time). This builds the muscle so Phase 1 evals can graduate the pattern to fully auto-act if it stays clean.

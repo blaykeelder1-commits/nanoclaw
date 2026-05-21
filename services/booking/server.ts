@@ -26,13 +26,28 @@ import {
   hasOverlappingBooking, cancelBooking, getActiveBookings, getBookingsByEmail,
   expireStalePendingBookings, getBookedDatesFromDb, clearBalance, setLicensePhoto,
   markOwnerNotified, getUnnotifiedPaidBookings, markLicenseSmsSent,
+  generateAgreementId, generateAgreementToken, generateSignToken,
+  createPreBookingAgreement, createBookingAgreement,
+  getAgreement, getAgreementByToken, getAgreementForBooking,
+  linkAgreementToBooking, getBookingBySignToken, setBookingPaymentLink,
+  setBookingSignToken, setBookingPricingSnapshot,
 } from './db.js';
+import {
+  renderHtml as renderAgreementHtml,
+  renderText as renderAgreementText,
+  sha256Hex,
+  kindForEquipment,
+  VERSION as AGREEMENT_VERSION,
+} from './agreement-template.js';
 import {
   sendOwnerNotification, sendCustomerConfirmation,
   sendPaymentReceivedNotification, sendCancellationConfirmation,
 } from './email.js';
 import { sendQuoSMS } from './quo.js';
-import type { AgentCheckoutRequest, AvailabilityRequest, Booking, CheckoutRequest, EquipmentKey } from './types.js';
+import type {
+  AgentCheckoutRequest, AgreementContext, AvailabilityRequest,
+  Booking, CheckoutRequest, EquipmentKey,
+} from './types.js';
 
 // ── Owner-Notification Coordinator ──────────────────────────────────
 
@@ -338,6 +353,20 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
     return;
   }
 
+  // Signed rental agreement is mandatory. Step 4 of form.html POSTs to
+  // /api/agreements/pre-booking and threads the returned agreementToken back
+  // here. The token consumes itself when we link it to the new booking row.
+  const agreementToken = (body as any).agreementToken as string | undefined;
+  if (!agreementToken || typeof agreementToken !== 'string') {
+    json(res, 400, { error: 'agreement_required', detail: 'Please sign the rental agreement before paying.' });
+    return;
+  }
+  const pendingAgreement = getAgreementByToken(agreementToken);
+  if (!pendingAgreement) {
+    json(res, 400, { error: 'agreement_invalid', detail: 'Your signed agreement could not be found — please re-sign and try again.' });
+    return;
+  }
+
   // Generate booking ID and create Square payment link
   const bookingId = generateBookingId();
 
@@ -368,6 +397,10 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
     paymentUrl: paymentResult.paymentUrl,
     deliveryAddress,
   });
+
+  // Bind the pre-signed agreement to the new booking. This consumes the
+  // one-time token (agreement_token is cleared) and stamps bookings.agreement_id.
+  linkAgreementToBooking(pendingAgreement.id, booking.id);
 
   // Associate uploaded license photo with the booking (move session-scoped upload → booking-scoped)
   if (body.licenseFileId && body.sessionId
@@ -409,18 +442,19 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
 
 // ── Agent-Initiated Checkout (in-chat booking via Andy) ─────────────
 //
-// Same as /api/checkout except:
-//   1. No license-photo-on-disk requirement (license is collected via
-//      a post-payment SMS to the customer's phone).
-//   2. Returns a `licenseUploadUrl` the agent should include in its
-//      reply alongside the payment URL.
-//   3. The booking row is flagged `agent_initiated=1` so the Square
-//      webhook knows to send the license-upload SMS after payment.
+// New sequence (since v1.0.0 rental agreements were added):
+//   1. Andy POSTs equipment + dates + customer here.
+//   2. Server creates the booking row in 'pending' status WITHOUT a Square
+//      payment link, mints a sign_token, and returns:
+//        - licenseUploadUrl  (existing /license/:bookingId page)
+//        - signUrl           (new /sign/:bookingId/:signToken page)
+//   3. Andy sends both URLs to the customer.
+//   4. Customer uploads license -> bookings.license_photo populated.
+//   5. Customer signs agreement -> bookings.agreement_id populated.
+//   6. Andy polls GET /api/booking/:id; when both are populated, calls
+//      POST /api/agent-payment-link/:bookingId to mint the Square link.
 //
-// Auth: simple shared-secret header `X-Agent-Token` matching
-//   process.env.AGENT_API_TOKEN. Localhost-only callers (Andy's CLI on
-//   the same VPS) can also call without the header — handled by the
-//   request router below.
+// Auth: shared-secret header `X-Agent-Token` matching process.env.AGENT_API_TOKEN.
 
 async function handleAgentCheckout(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   let body: AgentCheckoutRequest;
@@ -512,15 +546,11 @@ async function handleAgentCheckout(req: http.IncomingMessage, res: http.ServerRe
   }
 
   const bookingId = generateBookingId();
-  let paymentResult;
-  try {
-    paymentResult = await createPaymentLink(pricing, body.customer, bookingId);
-  } catch (err: any) {
-    console.error('[agent-checkout] Square error:', err.message);
-    json(res, 502, { error: 'Failed to create Square payment link.' });
-    return;
-  }
+  const signToken = generateSignToken();
 
+  // Create the booking row up-front so the customer can upload a license and
+  // sign the agreement against it. Square link is minted later via
+  // /api/agent-payment-link/:bookingId once both prerequisites are met.
   const booking = createBooking({
     id: bookingId,
     equipment: equipmentKey,
@@ -533,23 +563,35 @@ async function handleAgentCheckout(req: http.IncomingMessage, res: http.ServerRe
     balance: pricing.balance,
     addOns: pricing.addOns,
     details: body.details || '',
-    squareOrderId: paymentResult.orderId,
-    squarePaymentLinkId: paymentResult.paymentLinkId,
-    paymentUrl: paymentResult.paymentUrl,
+    squareOrderId: '',
+    squarePaymentLinkId: '',
+    paymentUrl: '',
     deliveryAddress,
     agentInitiated: true,
   });
 
+  // Persist pricing snapshot + sign_token for the later mint step.
+  setBookingSignToken(booking.id, signToken);
+  setBookingPricingSnapshot(
+    booking.id,
+    JSON.stringify({
+      lineItems: pricing.lineItems,
+      chargeNow: pricing.chargeNow,
+      paymentMode: pricing.paymentMode,
+    }),
+  );
+
   const publicBase = process.env.BOOKING_PUBLIC_BASE_URL || 'https://chat.sheridantrailerrentals.us';
   const licenseUploadUrl = `${publicBase}/license/${booking.id}`;
+  const signUrl = `${publicBase}/sign/${booking.id}/${signToken}`;
 
-  console.log(`[agent-checkout] Created ${booking.id} for ${body.customer.firstName} ${body.customer.lastName} — payment ${paymentResult.paymentUrl}`);
+  console.log(`[agent-checkout] Created ${booking.id} for ${body.customer.firstName} ${body.customer.lastName} — awaiting license + signature`);
 
   json(res, 200, {
     bookingId: booking.id,
-    paymentUrl: paymentResult.paymentUrl,
-    orderId: paymentResult.orderId,
     licenseUploadUrl,
+    signUrl,
+    status: booking.status,
     pricing: {
       subtotal: pricing.subtotal,
       deposit: pricing.deposit,
@@ -1082,6 +1124,10 @@ function handleGetBooking(res: http.ServerResponse, bookingId: string): void {
   const unit = equipConfig?.unit || 'day';
 
   const isDepositOnly = booking.balance > 0;
+  const readyToPay = booking.agentInitiated
+    && !!booking.licenseFileId
+    && !!booking.agreementId
+    && !booking.paymentUrl;
   json(res, 200, {
     id: booking.id,
     equipment: booking.equipmentLabel,
@@ -1101,6 +1147,14 @@ function handleGetBooking(res: http.ServerResponse, bookingId: string): void {
       firstName: booking.customer.firstName,
       lastName: booking.customer.lastName,
     },
+    // Surfaced for Andy's poller. The agent waits for both flags to be true
+    // before calling POST /api/agent-payment-link/:id.
+    agentInitiated: booking.agentInitiated,
+    licenseUploaded: !!booking.licenseFileId,
+    agreementSigned: !!booking.agreementId,
+    agreementId: booking.agreementId || '',
+    paymentUrl: booking.paymentUrl,
+    readyToPay,
     createdAt: booking.createdAt,
   });
 }
@@ -1112,6 +1166,554 @@ function formatDatePretty(dateStr: string): string {
     return `${months[parseInt(parts[1], 10) - 1]} ${parseInt(parts[2], 10)}, ${parts[0]}`;
   }
   return dateStr;
+}
+
+// ── Rental Agreement Endpoints ──────────────────────────────────────
+
+interface SignAgreementBody {
+  fullName?: string;
+  signatureDataUrl?: string;
+  iAgree?: boolean;
+}
+
+interface PreBookingSignBody extends SignAgreementBody {
+  equipment?: EquipmentKey;
+  dates?: string[];
+  customer?: { firstName?: string; lastName?: string; email?: string };
+  addOns?: string[];
+  deliveryAddress?: string;
+}
+
+function validateSignaturePayload(b: SignAgreementBody): string | null {
+  if (!b.iAgree) return 'must_agree';
+  const name = (b.fullName ?? '').trim();
+  if (name.length < 2 || name.length > 120) return 'invalid_name';
+  const sig = (b.signatureDataUrl ?? '').trim();
+  if (!sig.startsWith('data:image/') || sig.length < 200) return 'missing_signature';
+  if (sig.length > 250_000) return 'signature_too_large';
+  return null;
+}
+
+function clientIpOf(req: http.IncomingMessage): string {
+  return (req.headers['x-forwarded-for']?.toString().split(',')[0].trim()) || req.socket.remoteAddress || '';
+}
+
+function buildAgreementContextFromBooking(booking: Booking): AgreementContext {
+  const equipConfig = EQUIPMENT[booking.equipment];
+  const hasDelivery = booking.addOns.includes('delivery');
+  return {
+    bookingId: booking.id,
+    equipmentLabel: booking.equipmentLabel,
+    customerName: `${booking.customer.firstName} ${booking.customer.lastName}`.trim(),
+    customerEmail: booking.customer.email,
+    dates: booking.dates,
+    numDays: booking.numDays,
+    unit: equipConfig?.unit || 'day',
+    deposit: booking.deposit,
+    total: booking.subtotal + booking.deposit,
+    deliveryAddress: booking.deliveryAddress,
+    hasDelivery,
+  };
+}
+
+/**
+ * POST /api/agreements/preview — returns the agreement HTML for the
+ * pre-checkout sign step in form.html. No signing happens here; this is a
+ * read-only render so the customer can read what they're about to sign.
+ */
+async function handleAgreementPreview(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  let body: PreBookingSignBody;
+  try { body = JSON.parse(await readBody(req)) as PreBookingSignBody; }
+  catch { json(res, 400, { error: 'Invalid JSON' }); return; }
+
+  if (!body.equipment || !EQUIPMENT[body.equipment]) { json(res, 400, { error: 'invalid_equipment' }); return; }
+  if (!Array.isArray(body.dates) || body.dates.length === 0) { json(res, 400, { error: 'no_dates' }); return; }
+
+  const equipmentKey = body.equipment as EquipmentKey;
+  const dates = [...body.dates].sort();
+  const numDays = equipmentKey === 'rv' ? dates.length - 1 : Math.max(1, dates.length - 1);
+  const pricing = calculatePrice(equipmentKey, numDays, body.addOns || [], { dates, paymentMode: 'full' });
+
+  const ctx: AgreementContext = {
+    bookingId: 'pending',
+    equipmentLabel: pricing.equipment.label,
+    customerName: `${body.customer?.firstName ?? ''} ${body.customer?.lastName ?? ''}`.trim() || 'Customer',
+    customerEmail: (body.customer?.email ?? '').trim(),
+    dates,
+    numDays,
+    unit: pricing.equipment.unit,
+    deposit: pricing.deposit,
+    total: pricing.subtotal + pricing.deposit,
+    deliveryAddress: (body.deliveryAddress ?? '').trim(),
+    hasDelivery: (body.addOns || []).includes('delivery'),
+  };
+  const kind = kindForEquipment(equipmentKey);
+  const html = renderAgreementHtml(kind, ctx);
+  json(res, 200, { html, version: AGREEMENT_VERSION });
+}
+
+/**
+ * POST /api/agreements/pre-booking — web form flow.
+ *
+ * Customer signs the agreement BEFORE the booking row exists (Step 4 in form.html).
+ * We insert with booking_id='' and a one-time agreement_token. /api/checkout
+ * later consumes the token and links it to the freshly-created booking.
+ *
+ * Pricing is recomputed server-side so a tampered client can't shrink the total
+ * shown on the signed copy.
+ */
+async function handleSignAgreementPreBooking(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  let body: PreBookingSignBody;
+  try { body = JSON.parse(await readBody(req)) as PreBookingSignBody; }
+  catch { json(res, 400, { error: 'Invalid JSON' }); return; }
+
+  const err = validateSignaturePayload(body);
+  if (err) { json(res, 400, { error: err }); return; }
+
+  if (!body.equipment || !EQUIPMENT[body.equipment]) {
+    json(res, 400, { error: 'invalid_equipment' });
+    return;
+  }
+  if (!Array.isArray(body.dates) || body.dates.length === 0) {
+    json(res, 400, { error: 'no_dates' });
+    return;
+  }
+  for (const d of body.dates) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { json(res, 400, { error: 'invalid_date_format' }); return; }
+  }
+  const customerEmail = (body.customer?.email || '').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(customerEmail)) {
+    json(res, 400, { error: 'invalid_email' });
+    return;
+  }
+
+  const equipmentKey = body.equipment as EquipmentKey;
+  const dates = [...body.dates].sort();
+  const numDays = equipmentKey === 'rv' ? dates.length - 1 : Math.max(1, dates.length - 1);
+  const pricing = calculatePrice(equipmentKey, numDays, body.addOns || [], { dates, paymentMode: 'full' });
+
+  const ctx: AgreementContext = {
+    bookingId: 'pending', // placeholder visible in the signed text
+    equipmentLabel: pricing.equipment.label,
+    customerName: `${body.customer?.firstName ?? ''} ${body.customer?.lastName ?? ''}`.trim() || (body.fullName?.trim() ?? ''),
+    customerEmail,
+    dates,
+    numDays,
+    unit: pricing.equipment.unit,
+    deposit: pricing.deposit,
+    total: pricing.subtotal + pricing.deposit,
+    deliveryAddress: (body.deliveryAddress ?? '').trim(),
+    hasDelivery: (body.addOns || []).includes('delivery'),
+  };
+  const kind = kindForEquipment(equipmentKey);
+  const contentHash = sha256Hex(renderAgreementText(kind, ctx));
+
+  const agreementId = generateAgreementId();
+  const agreementToken = generateAgreementToken();
+  createPreBookingAgreement({
+    id: agreementId,
+    agreementToken,
+    kind,
+    version: AGREEMENT_VERSION,
+    contentHash,
+    signerName: body.fullName!.trim(),
+    signerEmail: customerEmail,
+    signaturePng: body.signatureDataUrl!,
+    signerIp: clientIpOf(req),
+    signerUa: req.headers['user-agent']?.toString() || '',
+  });
+
+  json(res, 200, { agreementId, agreementToken, contentHash, version: AGREEMENT_VERSION });
+}
+
+/**
+ * POST /api/agreements/by-sign-token/:signToken — Andy's flow.
+ *
+ * Andy created the booking via /api/agent-checkout and texted the customer a
+ * /sign/:bookingId/:signToken URL. The customer hits this endpoint via the
+ * standalone sign page, the agreement is bound directly to the booking, and
+ * bookings.agreement_id is stamped so Andy's poller sees ready_to_pay.
+ */
+async function handleSignAgreementByToken(req: http.IncomingMessage, res: http.ServerResponse, signToken: string): Promise<void> {
+  let body: SignAgreementBody;
+  try { body = JSON.parse(await readBody(req)) as SignAgreementBody; }
+  catch { json(res, 400, { error: 'Invalid JSON' }); return; }
+
+  const err = validateSignaturePayload(body);
+  if (err) { json(res, 400, { error: err }); return; }
+
+  const booking = getBookingBySignToken(signToken);
+  if (!booking) { json(res, 404, { error: 'sign_link_invalid' }); return; }
+  if (booking.status === 'cancelled') { json(res, 409, { error: 'booking_cancelled' }); return; }
+
+  // Idempotent — if the booking is already signed, return its existing id.
+  if (booking.agreementId) {
+    json(res, 200, { agreementId: booking.agreementId, alreadySigned: true });
+    return;
+  }
+
+  const ctx = buildAgreementContextFromBooking(booking);
+  const kind = kindForEquipment(booking.equipment);
+  const contentHash = sha256Hex(renderAgreementText(kind, ctx));
+
+  const agreementId = generateAgreementId();
+  createBookingAgreement({
+    id: agreementId,
+    bookingId: booking.id,
+    kind,
+    version: AGREEMENT_VERSION,
+    contentHash,
+    signerName: body.fullName!.trim(),
+    signerEmail: booking.customer.email,
+    signaturePng: body.signatureDataUrl!,
+    signerIp: clientIpOf(req),
+    signerUa: req.headers['user-agent']?.toString() || '',
+  });
+
+  json(res, 200, { agreementId, contentHash, version: AGREEMENT_VERSION });
+}
+
+/**
+ * GET /sign/:bookingId/:signToken — mobile-friendly signing page (Andy's flow).
+ * Page POSTs to /api/agreements/by-sign-token/:signToken.
+ */
+function handleSignPage(res: http.ServerResponse, bookingId: string, signToken: string): void {
+  const booking = getBooking(bookingId);
+  if (!booking || booking.signToken !== signToken || !booking.signToken) {
+    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end('<h1>Sign link not found</h1><p>This link is invalid or expired. Please reply to your text and we will resend.</p>');
+    return;
+  }
+  const ctx = buildAgreementContextFromBooking(booking);
+  const kind = kindForEquipment(booking.equipment);
+  const alreadySigned = !!booking.agreementId;
+
+  const agreementHtml = renderAgreementHtml(kind, ctx);
+  const page = renderSignPage({
+    bookingId: booking.id,
+    signToken,
+    customerName: `${booking.customer.firstName} ${booking.customer.lastName}`.trim(),
+    agreementHtml,
+    alreadySigned,
+  });
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(page);
+}
+
+/**
+ * GET /api/agreements/:id — read-only signed copy.
+ * Public by unguessable id (16 hex chars = 64 bits of entropy).
+ */
+function handleGetAgreement(res: http.ServerResponse, agreementId: string): void {
+  const agreement = getAgreement(agreementId);
+  if (!agreement) {
+    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end('<h1>Agreement not found</h1>');
+    return;
+  }
+  // Web-form rows that were never finalized (booking_id still empty) shouldn't be exposed.
+  if (!agreement.bookingId) {
+    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end('<h1>Agreement not found</h1>');
+    return;
+  }
+  const booking = getBooking(agreement.bookingId);
+  if (!booking) {
+    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end('<h1>Agreement not found</h1>');
+    return;
+  }
+  const ctx = buildAgreementContextFromBooking(booking);
+  const kind = kindForEquipment(booking.equipment);
+  const agreementHtml = renderAgreementHtml(kind, ctx);
+  const page = renderSignedView({
+    agreementId: agreement.id,
+    bookingId: booking.id,
+    agreementHtml,
+    signerName: agreement.signerName,
+    signaturePng: agreement.signaturePng,
+    signedAt: agreement.signedAt,
+    contentHash: agreement.contentHash,
+    version: agreement.version,
+    kind: agreement.kind,
+  });
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(page);
+}
+
+/**
+ * POST /api/agent-payment-link/:bookingId — Andy's mint step.
+ * Server enforces both prerequisites: license_photo on disk + agreement_id set.
+ * Returns 412 if either is missing.
+ */
+async function handleAgentPaymentLink(req: http.IncomingMessage, res: http.ServerResponse, bookingId: string): Promise<void> {
+  const supplied = req.headers['x-agent-token'];
+  const expected = process.env.AGENT_API_TOKEN;
+  if (!expected || typeof supplied !== 'string' || supplied !== expected) {
+    json(res, 401, { error: 'unauthorized' });
+    return;
+  }
+  const booking = getBooking(bookingId);
+  if (!booking) { json(res, 404, { error: 'booking_not_found' }); return; }
+  if (booking.status === 'cancelled') { json(res, 409, { error: 'booking_cancelled' }); return; }
+  if (!booking.agentInitiated) { json(res, 400, { error: 'not_agent_initiated' }); return; }
+
+  // Idempotent: if Square link already exists, return it.
+  if (booking.paymentUrl && booking.squareOrderId) {
+    json(res, 200, { paymentUrl: booking.paymentUrl, orderId: booking.squareOrderId, alreadyMinted: true });
+    return;
+  }
+
+  if (!booking.licenseFileId) { json(res, 412, { error: 'license_missing', detail: 'Customer has not uploaded their driver\'s license yet.' }); return; }
+  if (!booking.agreementId) { json(res, 412, { error: 'agreement_missing', detail: 'Customer has not signed the rental agreement yet.' }); return; }
+
+  // Reconstruct pricing from the booking snapshot persisted at agent-checkout time.
+  let pricing;
+  try {
+    const snap = JSON.parse(booking.pricingSnapshot || '{}');
+    pricing = {
+      equipment: EQUIPMENT[booking.equipment],
+      numDays: booking.numDays,
+      lineItems: snap.lineItems,
+      subtotal: booking.subtotal,
+      deposit: booking.deposit,
+      balance: booking.balance,
+      addOns: booking.addOns,
+      paymentMode: snap.paymentMode || 'full',
+      chargeNow: snap.chargeNow || (booking.subtotal + booking.deposit),
+    };
+  } catch (e: any) {
+    json(res, 500, { error: 'pricing_snapshot_corrupt', detail: e?.message });
+    return;
+  }
+
+  let paymentResult;
+  try {
+    paymentResult = await createPaymentLink(pricing, booking.customer, booking.id);
+  } catch (err: any) {
+    console.error(`[agent-payment-link] Square error for ${booking.id}: ${err.message}`);
+    json(res, 502, { error: 'square_failed', detail: err.message });
+    return;
+  }
+
+  setBookingPaymentLink(booking.id, {
+    orderId: paymentResult.orderId,
+    paymentLinkId: paymentResult.paymentLinkId,
+    paymentUrl: paymentResult.paymentUrl,
+  });
+
+  console.log(`[agent-payment-link] Minted Square link for ${booking.id} (${paymentResult.paymentUrl})`);
+  json(res, 200, { paymentUrl: paymentResult.paymentUrl, orderId: paymentResult.orderId });
+}
+
+// ── HTML helpers for sign + signed-view pages ───────────────────────
+
+interface SignPageProps {
+  bookingId: string;
+  signToken: string;
+  customerName: string;
+  agreementHtml: string;
+  alreadySigned: boolean;
+}
+
+function renderSignPage(p: SignPageProps): string {
+  // Standalone HTML; no shared layout. Inline JS posts to
+  // /api/agreements/by-sign-token/:signToken and shows a success state on 200.
+  const safeName = p.customerName.replace(/[<>"&']/g, '');
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Sign rental agreement — Sheridan Trailer Rentals</title>
+<style>
+  body { margin: 0; background: #f8fafc; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 16px 14px 80px; }
+  .doc { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 6px; max-height: 460px; overflow-y: auto; box-shadow: 0 2px 8px rgba(15,23,42,.06); }
+  h2 { margin: 22px 0 6px; font-size: 20px; }
+  p.sub { color: #64748b; margin: 0 0 16px; font-size: 14px; }
+  label { display: block; font-weight: 600; margin: 14px 0 6px; font-size: 14px; }
+  input[type=text] { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; box-sizing: border-box; }
+  input[type=text]:focus { outline: 2px solid #0891b2; border-color: #0891b2; }
+  .canvas-wrap { position: relative; }
+  canvas { width: 100%; height: 170px; background: #fff; border: 1px dashed #cbd5e1; border-radius: 8px; touch-action: none; display: block; }
+  .clear { position: absolute; top: 6px; right: 10px; background: transparent; border: 0; color: #64748b; font-size: 13px; cursor: pointer; }
+  .check { display: flex; gap: 10px; align-items: flex-start; font-size: 15px; line-height: 1.45; margin: 18px 0 6px; }
+  .check input { transform: scale(1.2); margin-top: 3px; }
+  button.primary { width: 100%; padding: 16px; font-size: 17px; font-weight: 700; background: #0891b2; color: #fff; border: 0; border-radius: 10px; margin-top: 18px; cursor: pointer; }
+  button.primary:disabled { background: #94a3b8; cursor: not-allowed; }
+  .error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 12px 14px; border-radius: 8px; margin-top: 12px; font-size: 14px; }
+  .ok { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; padding: 16px; border-radius: 10px; font-size: 15px; text-align: center; }
+  .ok h2 { margin: 0 0 8px; color: #065f46; }
+</style>
+</head><body>
+<div class="wrap">
+  ${p.alreadySigned ? `
+    <div class="ok">
+      <h2>You're already signed up</h2>
+      <p style="margin:0;">Rental agreement for booking ${esc(p.bookingId)} is on file. Reply to your text — Andy will send the payment link shortly.</p>
+    </div>` : `
+    <div id="ok" class="ok" style="display:none;">
+      <h2>Signed — thank you, ${esc(safeName) || 'friend'}.</h2>
+      <p style="margin:0;">We've recorded your signature. Reply to your text — Andy will send the payment link in a moment.</p>
+    </div>
+    <div id="form">
+      <div class="doc">${p.agreementHtml}</div>
+      <h2>Sign here</h2>
+      <p class="sub">Drawing with your finger or trackpad works — clear and re-draw if needed.</p>
+      <div class="canvas-wrap"><canvas id="sig"></canvas><button class="clear" type="button" id="clear">Clear</button></div>
+      <label for="name">Type your full legal name</label>
+      <input id="name" type="text" autocomplete="name" maxlength="120" value="${esc(safeName)}">
+      <label class="check"><input id="agree" type="checkbox"><span>I have read and agree to the terms of this rental agreement.</span></label>
+      <div id="err" class="error" style="display:none;"></div>
+      <button class="primary" type="button" id="submit">Sign &amp; continue</button>
+    </div>
+  `}
+</div>
+<script>
+(function(){
+  ${p.alreadySigned ? '' : `
+  var canvas = document.getElementById('sig');
+  var btn = document.getElementById('submit');
+  var clearBtn = document.getElementById('clear');
+  var nameInput = document.getElementById('name');
+  var agree = document.getElementById('agree');
+  var err = document.getElementById('err');
+  var ok = document.getElementById('ok');
+  var form = document.getElementById('form');
+  var ctx = canvas.getContext('2d');
+  var dirty = false;
+  var drawing = false;
+  var last = null;
+  function size(){
+    var ratio = window.devicePixelRatio || 1;
+    var rect = canvas.getBoundingClientRect();
+    canvas.width = Math.round(rect.width * ratio);
+    canvas.height = Math.round(rect.height * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  }
+  function clearCanvas(){
+    ctx.save();
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.restore();
+    dirty = false;
+  }
+  size();
+  window.addEventListener('resize', function(){ size(); clearCanvas(); });
+  function pos(e){
+    var rect = canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+  canvas.addEventListener('pointerdown', function(e){
+    drawing = true;
+    canvas.setPointerCapture(e.pointerId);
+    last = pos(e);
+  });
+  canvas.addEventListener('pointermove', function(e){
+    if (!drawing) return;
+    var p = pos(e);
+    ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+    last = p; dirty = true;
+  });
+  function stop(e){ drawing = false; last = null; try { canvas.releasePointerCapture(e.pointerId); } catch (_) {} }
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+  canvas.addEventListener('pointerleave', stop);
+  clearBtn.addEventListener('click', clearCanvas);
+  btn.addEventListener('click', function(){
+    err.style.display = 'none';
+    if (!dirty) { err.textContent = 'Please draw your signature.'; err.style.display = 'block'; return; }
+    var name = nameInput.value.trim();
+    if (name.length < 2) { err.textContent = 'Please type your full name.'; err.style.display = 'block'; return; }
+    if (!agree.checked) { err.textContent = 'Please tick the box to confirm you agree.'; err.style.display = 'block'; return; }
+    btn.disabled = true; btn.textContent = 'Saving…';
+    fetch('/api/agreements/by-sign-token/${encodeURIComponent(p.signToken)}', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fullName: name, signatureDataUrl: canvas.toDataURL('image/png'), iAgree: true }),
+    }).then(function(r){ return r.json().then(function(d){ return { ok: r.ok, data: d }; }); })
+      .then(function(res){
+        if (res.ok && res.data.agreementId) {
+          form.style.display = 'none'; ok.style.display = 'block';
+        } else {
+          err.textContent = res.data.detail || res.data.error || 'Something went wrong.';
+          err.style.display = 'block'; btn.disabled = false; btn.textContent = 'Sign & continue';
+        }
+      }).catch(function(){
+        err.textContent = 'Connection error — please try again.'; err.style.display = 'block';
+        btn.disabled = false; btn.textContent = 'Sign & continue';
+      });
+  });
+  `}
+})();
+</script>
+</body></html>`;
+}
+
+interface SignedViewProps {
+  agreementId: string;
+  bookingId: string;
+  agreementHtml: string;
+  signerName: string;
+  signaturePng: string;
+  signedAt: string;
+  contentHash: string;
+  version: string;
+  kind: string;
+}
+
+function renderSignedView(p: SignedViewProps): string {
+  let signedPretty = p.signedAt;
+  try {
+    const d = new Date(p.signedAt);
+    if (!Number.isNaN(d.getTime())) {
+      signedPretty = d.toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short', timeZone: 'America/Chicago' }) + ' CT';
+    }
+  } catch {}
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signed rental agreement ${esc(p.agreementId)} — Sheridan Trailer Rentals</title>
+<style>
+  body { margin: 0; background: #f8fafc; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 16px 14px 60px; }
+  .badge { display: inline-block; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .frame { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 6px; margin-top: 14px; box-shadow: 0 2px 8px rgba(15,23,42,.06); }
+  .sig-block { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 22px; margin-top: 18px; }
+  .sig-row { display: flex; gap: 28px; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; }
+  .sig-label { font-size: 13px; color: #64748b; margin-bottom: 6px; }
+  .sig-img { max-width: 320px; max-height: 110px; border-bottom: 1px solid #0f172a; padding-bottom: 4px; display: block; }
+  .sig-name { font-size: 15px; margin-top: 6px; }
+  .audit { color: #64748b; font-size: 12px; margin-top: 18px; }
+  code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
+  @media print { .badge { border-color: #000; } }
+</style>
+</head><body>
+<div class="wrap">
+  <p><span class="badge">SIGNED</span> &nbsp; Agreement ${esc(p.agreementId)} &middot; Booking ${esc(p.bookingId)}</p>
+  <div class="frame">${p.agreementHtml}</div>
+  <div class="sig-block">
+    <div class="sig-row">
+      <div>
+        <div class="sig-label">Customer signature</div>
+        <img class="sig-img" alt="Signature" src="${esc(p.signaturePng)}">
+        <div class="sig-name">${esc(p.signerName)}</div>
+      </div>
+      <div>
+        <div class="sig-label">Date signed</div>
+        <div style="font-weight:600;font-size:15px;">${esc(signedPretty)}</div>
+      </div>
+    </div>
+  </div>
+  <p class="audit">Agreement <code>${esc(p.kind)}</code> v${esc(p.version)} &middot; content hash <code>${esc(p.contentHash.slice(0, 16))}…</code> &middot; non-repudiable record stored by Sheridan Trailer Rentals.</p>
+  <p class="audit">To save a PDF copy, use your browser's Print → Save as PDF.</p>
+</div>
+</body></html>`;
+}
+
+function esc(s: string): string {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
 
 // ── Router ──────────────────────────────────────────────────────────
@@ -1189,6 +1791,45 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     if (req.method === 'GET' && url.startsWith('/license/')) {
       const id = url.split('/license/')[1]?.split('?')[0] || '';
       handleLicensePage(res, id);
+      return;
+    }
+
+    // ── Rental Agreement endpoints ────────────────────────────────────
+    // POST /api/agreements/preview — read-only render for the sign UI
+    if (req.method === 'POST' && url === '/api/agreements/preview') {
+      await handleAgreementPreview(req, res);
+      return;
+    }
+    // POST /api/agreements/pre-booking — web form sign step before checkout
+    if (req.method === 'POST' && url === '/api/agreements/pre-booking') {
+      await handleSignAgreementPreBooking(req, res);
+      return;
+    }
+    // POST /api/agreements/by-sign-token/:signToken — Andy's flow
+    if (req.method === 'POST' && url.startsWith('/api/agreements/by-sign-token/')) {
+      const token = url.split('/api/agreements/by-sign-token/')[1]?.split('?')[0] || '';
+      await handleSignAgreementByToken(req, res, token);
+      return;
+    }
+    // GET /api/agreements/:id — public read-only signed view
+    if (req.method === 'GET' && url.startsWith('/api/agreements/')) {
+      const id = url.split('/api/agreements/')[1]?.split('?')[0] || '';
+      handleGetAgreement(res, id);
+      return;
+    }
+    // GET /sign/:bookingId/:signToken — mobile signing page (Andy's flow)
+    if (req.method === 'GET' && url.startsWith('/sign/')) {
+      const rest = url.split('/sign/')[1] || '';
+      const [bookingId, signToken] = rest.split('?')[0].split('/');
+      if (bookingId && signToken) {
+        handleSignPage(res, bookingId, signToken);
+        return;
+      }
+    }
+    // POST /api/agent-payment-link/:bookingId — Andy's mint step
+    if (req.method === 'POST' && url.startsWith('/api/agent-payment-link/')) {
+      const id = url.split('/api/agent-payment-link/')[1]?.split('?')[0] || '';
+      await handleAgentPaymentLink(req, res, id);
       return;
     }
 

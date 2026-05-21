@@ -7,7 +7,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import type { Booking, BookingStatus, Customer, EquipmentKey } from './types.js';
+import type { Agreement, AgreementKind, Booking, BookingStatus, Customer, EquipmentKey } from './types.js';
 
 let db: Database.Database;
 
@@ -51,6 +51,28 @@ function createSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
     CREATE INDEX IF NOT EXISTS idx_bookings_equipment_dates ON bookings(equipment, dates);
     CREATE INDEX IF NOT EXISTS idx_bookings_square_order ON bookings(square_order_id);
+
+    -- Electronic rental agreements. One row per signed copy bound to a booking.
+    -- content_hash is SHA-256 of the canonical rendered text at signing time
+    -- so we can prove later which exact version the customer signed.
+    -- For the web-form path, rows are inserted with booking_id='' + an
+    -- agreement_token and linked to the real booking on /api/checkout success.
+    CREATE TABLE IF NOT EXISTS agreements (
+      id TEXT PRIMARY KEY,
+      booking_id TEXT NOT NULL DEFAULT '',
+      agreement_token TEXT NOT NULL DEFAULT '',
+      kind TEXT NOT NULL,
+      version TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      signer_name TEXT NOT NULL,
+      signer_email TEXT NOT NULL,
+      signature_png TEXT NOT NULL,
+      signer_ip TEXT NOT NULL DEFAULT '',
+      signer_ua TEXT NOT NULL DEFAULT '',
+      signed_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agreements_booking ON agreements(booking_id);
+    CREATE INDEX IF NOT EXISTS idx_agreements_token ON agreements(agreement_token);
   `);
 
   // Migrations — add columns that may not exist in older databases
@@ -63,6 +85,14 @@ function createSchema(): void {
     `ALTER TABLE bookings ADD COLUMN owner_notified_at TEXT NOT NULL DEFAULT ''`,
     `ALTER TABLE bookings ADD COLUMN agent_initiated INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE bookings ADD COLUMN license_sms_sent_at TEXT NOT NULL DEFAULT ''`,
+    // Agreement linkage
+    `ALTER TABLE bookings ADD COLUMN agreement_id TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE bookings ADD COLUMN sign_token TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE bookings ADD COLUMN agreement_sms_sent_at TEXT NOT NULL DEFAULT ''`,
+    // Agent-checkout flow needs to defer Square link creation until after license + agreement.
+    // We snapshot the pricing result JSON so the later agent-payment-link mint can hand
+    // the same numbers to Square without re-validating dates or promo codes.
+    `ALTER TABLE bookings ADD COLUMN pricing_snapshot TEXT NOT NULL DEFAULT ''`,
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }
@@ -74,6 +104,21 @@ function createSchema(): void {
 export function generateBookingId(): string {
   // Short, URL-safe booking ID: SR-XXXXXXXX
   return `SR-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+}
+
+export function generateAgreementId(): string {
+  // AG-XXXXXXXXXXXXXXXX — 16 hex chars = 64 bits of entropy, unguessable.
+  return `AG-${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
+}
+
+export function generateAgreementToken(): string {
+  // Short-lived pre-booking token used by the web form to link sign step → checkout.
+  return crypto.randomBytes(16).toString('hex');
+}
+
+export function generateSignToken(): string {
+  // Unguessable token in the /sign/:bookingId/:signToken URL for Andy's flow.
+  return crypto.randomBytes(16).toString('hex');
 }
 
 // ── CRUD Operations ─────────────────────────────────────────────────
@@ -280,6 +325,125 @@ export function hasOverlappingBooking(equipment: EquipmentKey, dates: string[]):
   return false;
 }
 
+// ── Agreement Operations ────────────────────────────────────────────
+
+/**
+ * Insert a pre-booking agreement (web-form flow). booking_id is empty and will
+ * be populated by linkAgreementToBooking() once /api/checkout creates the row.
+ */
+export function createPreBookingAgreement(params: {
+  id: string;
+  agreementToken: string;
+  kind: AgreementKind;
+  version: string;
+  contentHash: string;
+  signerName: string;
+  signerEmail: string;
+  signaturePng: string;
+  signerIp?: string;
+  signerUa?: string;
+}): Agreement {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO agreements (
+      id, booking_id, agreement_token, kind, version, content_hash,
+      signer_name, signer_email, signature_png,
+      signer_ip, signer_ua, signed_at
+    ) VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    params.id, params.agreementToken, params.kind, params.version, params.contentHash,
+    params.signerName, params.signerEmail, params.signaturePng,
+    params.signerIp || '', params.signerUa || '', now,
+  );
+  return getAgreement(params.id)!;
+}
+
+/**
+ * Insert an agreement directly bound to an existing booking (Andy's flow).
+ * No agreement_token because the link is by sign_token on the booking.
+ */
+export function createBookingAgreement(params: {
+  id: string;
+  bookingId: string;
+  kind: AgreementKind;
+  version: string;
+  contentHash: string;
+  signerName: string;
+  signerEmail: string;
+  signaturePng: string;
+  signerIp?: string;
+  signerUa?: string;
+}): Agreement {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO agreements (
+      id, booking_id, agreement_token, kind, version, content_hash,
+      signer_name, signer_email, signature_png,
+      signer_ip, signer_ua, signed_at
+    ) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    params.id, params.bookingId, params.kind, params.version, params.contentHash,
+    params.signerName, params.signerEmail, params.signaturePng,
+    params.signerIp || '', params.signerUa || '', now,
+  );
+  db.prepare('UPDATE bookings SET agreement_id = ?, updated_at = ? WHERE id = ?')
+    .run(params.id, now, params.bookingId);
+  return getAgreement(params.id)!;
+}
+
+export function getAgreement(id: string): Agreement | null {
+  const row = db.prepare('SELECT * FROM agreements WHERE id = ?').get(id) as any;
+  return row ? rowToAgreement(row) : null;
+}
+
+export function getAgreementByToken(token: string): Agreement | null {
+  const row = db.prepare('SELECT * FROM agreements WHERE agreement_token = ? AND booking_id = \'\'').get(token) as any;
+  return row ? rowToAgreement(row) : null;
+}
+
+export function getAgreementForBooking(bookingId: string): Agreement | null {
+  const row = db.prepare('SELECT * FROM agreements WHERE booking_id = ? LIMIT 1').get(bookingId) as any;
+  return row ? rowToAgreement(row) : null;
+}
+
+/** Web-form completion: link the pre-booking row to the freshly-created booking. */
+export function linkAgreementToBooking(agreementId: string, bookingId: string): void {
+  const now = new Date().toISOString();
+  db.prepare(`UPDATE agreements SET booking_id = ?, agreement_token = '' WHERE id = ?`)
+    .run(bookingId, agreementId);
+  db.prepare('UPDATE bookings SET agreement_id = ?, updated_at = ? WHERE id = ?')
+    .run(agreementId, now, bookingId);
+}
+
+export function getBookingBySignToken(signToken: string): Booking | null {
+  if (!signToken) return null;
+  const row = db.prepare('SELECT * FROM bookings WHERE sign_token = ?').get(signToken) as any;
+  return row ? rowToBooking(row) : null;
+}
+
+export function setBookingPaymentLink(id: string, square: { orderId: string; paymentLinkId: string; paymentUrl: string }): void {
+  db.prepare(`
+    UPDATE bookings
+    SET square_order_id = ?, square_payment_link_id = ?, payment_url = ?, updated_at = ?
+    WHERE id = ?
+  `).run(square.orderId, square.paymentLinkId, square.paymentUrl, new Date().toISOString(), id);
+}
+
+export function setBookingSignToken(id: string, signToken: string): void {
+  db.prepare('UPDATE bookings SET sign_token = ?, updated_at = ? WHERE id = ?')
+    .run(signToken, new Date().toISOString(), id);
+}
+
+export function setBookingPricingSnapshot(id: string, snapshotJson: string): void {
+  db.prepare('UPDATE bookings SET pricing_snapshot = ?, updated_at = ? WHERE id = ?')
+    .run(snapshotJson, new Date().toISOString(), id);
+}
+
+export function getBookingPricingSnapshot(id: string): string {
+  const row = db.prepare('SELECT pricing_snapshot FROM bookings WHERE id = ?').get(id) as { pricing_snapshot?: string } | undefined;
+  return row?.pricing_snapshot || '';
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function rowToBooking(row: any): Booking {
@@ -312,7 +476,28 @@ function rowToBooking(row: any): Booking {
     deliveryAddress: row.delivery_address || '',
     agentInitiated: !!row.agent_initiated,
     licenseSmsSentAt: row.license_sms_sent_at || '',
+    agreementId: row.agreement_id || '',
+    signToken: row.sign_token || '',
+    agreementSmsSentAt: row.agreement_sms_sent_at || '',
+    pricingSnapshot: row.pricing_snapshot || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function rowToAgreement(row: any): Agreement {
+  return {
+    id: row.id,
+    bookingId: row.booking_id || '',
+    agreementToken: row.agreement_token || '',
+    kind: row.kind,
+    version: row.version,
+    contentHash: row.content_hash,
+    signerName: row.signer_name,
+    signerEmail: row.signer_email,
+    signaturePng: row.signature_png,
+    signerIp: row.signer_ip || '',
+    signerUa: row.signer_ua || '',
+    signedAt: row.signed_at,
   };
 }
