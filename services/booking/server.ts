@@ -86,6 +86,7 @@ const envKeys = [
   'OWNER_EMAIL',
   'QUO_API_KEY', 'QUO_SHERIDAN_PHONE_ID', 'QUO_SHERIDAN_NUMBER',
   'BOOKING_PUBLIC_BASE_URL',
+  'AGENT_API_TOKEN',
 ];
 
 function loadEnv(): void {
