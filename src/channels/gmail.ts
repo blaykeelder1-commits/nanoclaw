@@ -261,11 +261,25 @@ export class GmailChannel implements Channel {
       const lock = await client.getMailboxLock('INBOX');
 
       try {
-        // Search for unseen messages
-        const searchResult = await client.search({ seen: false }, { uid: true });
-        const uids = Array.isArray(searchResult) ? searchResult : [];
+        // Search for unseen messages from the last 14 days only — prevents
+        // a multi-year backlog of DMARC reports / newsletters from flooding
+        // Gmail's IMAP rate limit when the channel is re-enabled after
+        // being off (see feedback_audit_column_first_deploy memory).
+        const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+        const searchResult = await client.search({ seen: false, since }, { uid: true });
+        const allUids = Array.isArray(searchResult) ? searchResult : [];
 
-        if (uids.length === 0) return;
+        if (allUids.length === 0) return;
+
+        // Cap per-cycle processing. With GMAIL_POLL_INTERVAL=60s and cap=20,
+        // we drain at most 20/min — well under Gmail's IMAP fetch limits —
+        // and a first-time-enable backlog of even ~5000 emails drains in
+        // ~4 hours instead of tripping an account suspension on minute one.
+        const MAX_PER_CYCLE = 20;
+        const uids = allUids.slice(0, MAX_PER_CYCLE);
+        if (allUids.length > MAX_PER_CYCLE) {
+          logger.info({ pending: allUids.length, processing: MAX_PER_CYCLE }, 'Gmail backlog detected — processing in chunks');
+        }
 
         for (const uid of uids) {
           try {
