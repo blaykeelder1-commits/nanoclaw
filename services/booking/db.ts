@@ -61,6 +61,8 @@ function createSchema(): void {
     `ALTER TABLE bookings ADD COLUMN license_photo TEXT NOT NULL DEFAULT ''`,
     `ALTER TABLE bookings ADD COLUMN delivery_address TEXT NOT NULL DEFAULT ''`,
     `ALTER TABLE bookings ADD COLUMN owner_notified_at TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE bookings ADD COLUMN agent_initiated INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE bookings ADD COLUMN license_sms_sent_at TEXT NOT NULL DEFAULT ''`,
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }
@@ -92,6 +94,7 @@ export function createBooking(params: {
   squarePaymentLinkId: string;
   paymentUrl: string;
   deliveryAddress?: string;
+  agentInitiated?: boolean;
 }): Booking {
   const now = new Date().toISOString();
 
@@ -101,13 +104,13 @@ export function createBooking(params: {
       customer_first, customer_last, customer_email, customer_phone,
       subtotal, deposit, balance, add_ons, details, status,
       square_order_id, square_payment_link_id, payment_url,
-      calendar_event_id, delivery_address, created_at, updated_at
+      calendar_event_id, delivery_address, agent_initiated, created_at, updated_at
     ) VALUES (
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?, ?, ?, ?, ?, 'pending',
       ?, ?, ?,
-      '', ?, ?, ?
+      '', ?, ?, ?, ?
     )
   `).run(
     params.id, params.equipment, params.equipmentLabel,
@@ -118,10 +121,16 @@ export function createBooking(params: {
     JSON.stringify(params.addOns), params.details,
     params.squareOrderId, params.squarePaymentLinkId, params.paymentUrl,
     params.deliveryAddress || '',
+    params.agentInitiated ? 1 : 0,
     now, now,
   );
 
   return getBooking(params.id)!;
+}
+
+export function markLicenseSmsSent(id: string): void {
+  db.prepare(`UPDATE bookings SET license_sms_sent_at = ?, updated_at = ? WHERE id = ?`)
+    .run(new Date().toISOString(), new Date().toISOString(), id);
 }
 
 export function getBooking(id: string): Booking | null {
@@ -301,6 +310,8 @@ function rowToBooking(row: any): Booking {
     followupSentAt: row.followup_sent_at || null,
     licenseFileId: row.license_photo || '',
     deliveryAddress: row.delivery_address || '',
+    agentInitiated: !!row.agent_initiated,
+    licenseSmsSentAt: row.license_sms_sent_at || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

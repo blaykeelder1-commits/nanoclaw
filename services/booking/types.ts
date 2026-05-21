@@ -101,8 +101,31 @@ export interface Booking {
   licenseFileId: string;
   /** Destination address for the camper (empty string if pickup via RIVER promo). */
   deliveryAddress: string;
+  /** True when Andy created the booking from a chat conversation (license deferred to post-payment SMS). */
+  agentInitiated: boolean;
+  /** Timestamp the post-payment license-upload SMS went out, or '' if never sent. */
+  licenseSmsSentAt: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AgentCheckoutRequest {
+  equipment: EquipmentKey;
+  dates: string[];
+  customer: Customer;
+  addOns?: string[];
+  details?: string;
+  paymentMode?: PaymentMode;
+  promoCode?: string;
+  deliveryAddress?: string;
+}
+
+export interface AgentCheckoutResponse {
+  bookingId: string;
+  paymentUrl: string;
+  orderId: string;
+  licenseUploadUrl: string;
+  pricing: PriceBreakdown;
 }
 
 export interface AvailabilityRequest {

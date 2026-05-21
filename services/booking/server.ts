@@ -25,13 +25,14 @@ import {
   getBookingByOrderId, updateBookingStatus, setCalendarEventId,
   hasOverlappingBooking, cancelBooking, getActiveBookings, getBookingsByEmail,
   expireStalePendingBookings, getBookedDatesFromDb, clearBalance, setLicensePhoto,
-  markOwnerNotified, getUnnotifiedPaidBookings,
+  markOwnerNotified, getUnnotifiedPaidBookings, markLicenseSmsSent,
 } from './db.js';
 import {
   sendOwnerNotification, sendCustomerConfirmation,
   sendPaymentReceivedNotification, sendCancellationConfirmation,
 } from './email.js';
-import type { AvailabilityRequest, Booking, CheckoutRequest, EquipmentKey } from './types.js';
+import { sendQuoSMS } from './quo.js';
+import type { AgentCheckoutRequest, AvailabilityRequest, Booking, CheckoutRequest, EquipmentKey } from './types.js';
 
 // ── Owner-Notification Coordinator ──────────────────────────────────
 
@@ -83,6 +84,8 @@ const envKeys = [
   'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM',
   'BOOKING_PORT', 'BOOKING_ALLOWED_ORIGIN', 'BOOKING_CONFIRMATION_URL',
   'OWNER_EMAIL',
+  'QUO_API_KEY', 'QUO_SHERIDAN_PHONE_ID', 'QUO_SHERIDAN_NUMBER',
+  'BOOKING_PUBLIC_BASE_URL',
 ];
 
 function loadEnv(): void {
@@ -403,6 +406,160 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
   });
 }
 
+// ── Agent-Initiated Checkout (in-chat booking via Andy) ─────────────
+//
+// Same as /api/checkout except:
+//   1. No license-photo-on-disk requirement (license is collected via
+//      a post-payment SMS to the customer's phone).
+//   2. Returns a `licenseUploadUrl` the agent should include in its
+//      reply alongside the payment URL.
+//   3. The booking row is flagged `agent_initiated=1` so the Square
+//      webhook knows to send the license-upload SMS after payment.
+//
+// Auth: simple shared-secret header `X-Agent-Token` matching
+//   process.env.AGENT_API_TOKEN. Localhost-only callers (Andy's CLI on
+//   the same VPS) can also call without the header — handled by the
+//   request router below.
+
+async function handleAgentCheckout(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  let body: AgentCheckoutRequest;
+  try {
+    body = JSON.parse(await readBody(req)) as AgentCheckoutRequest;
+  } catch {
+    json(res, 400, { error: 'Invalid JSON' });
+    return;
+  }
+
+  if (!body.equipment || !EQUIPMENT[body.equipment]) {
+    json(res, 400, { error: 'Invalid equipment type' });
+    return;
+  }
+  if (!body.dates || body.dates.length === 0) {
+    json(res, 400, { error: 'No dates selected' });
+    return;
+  }
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  for (const d of body.dates) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      json(res, 400, { error: 'Invalid date format. Use YYYY-MM-DD.' });
+      return;
+    }
+    if (d < today) {
+      json(res, 400, { error: 'Cannot book dates in the past.' });
+      return;
+    }
+  }
+  if (!body.customer?.firstName || !body.customer?.lastName) {
+    json(res, 400, { error: 'Customer firstName and lastName required' });
+    return;
+  }
+  const email = (body.customer?.email || '').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+    json(res, 400, { error: 'Valid customer email required' });
+    return;
+  }
+  body.customer.email = email;
+  if (!body.customer?.phone) {
+    json(res, 400, { error: 'Customer phone required (for license-upload SMS)' });
+    return;
+  }
+
+  const dates = [...body.dates].sort();
+  const equipmentKey = body.equipment as EquipmentKey;
+
+  if (equipmentKey === 'rv' && dates.length < 2) {
+    json(res, 400, { error: 'RV rentals need at least 2 dates (pickup + drop-off).' });
+    return;
+  }
+  const numDays = equipmentKey === 'rv'
+    ? dates.length - 1
+    : Math.max(1, dates.length - 1);
+
+  if (hasOverlappingBooking(equipmentKey, dates)) {
+    json(res, 409, { error: 'Those dates overlap with an existing booking.' });
+    return;
+  }
+  let available = true;
+  try {
+    available = await datesAreAvailable(equipmentKey, dates);
+  } catch (err: any) {
+    console.error('[agent-checkout] Calendar availability check failed:', err.message);
+  }
+  if (!available) {
+    json(res, 409, { error: 'Equipment is not available for the selected dates.' });
+    return;
+  }
+
+  const rawMode = body.paymentMode;
+  const paymentMode: 'full' | 'deposit' | undefined = rawMode === 'deposit' ? 'deposit' : 'full';
+  const promoCode = body.promoCode;
+  const pricing = calculatePrice(equipmentKey, numDays, body.addOns || [], { dates, paymentMode, promoCode });
+
+  const deliveryAddress = (body.deliveryAddress || '').trim();
+  if (equipmentKey === 'rv') {
+    const promo = resolvePromoCode(promoCode, equipmentKey);
+    const promoRemovesDelivery = promo?.removeDelivery === true;
+    if (!promoRemovesDelivery && !pricing.addOns.includes('delivery')) {
+      json(res, 400, { error: 'RV bookings require delivery (or a valid pickup promo code).' });
+      return;
+    }
+    if (pricing.addOns.includes('delivery') && !deliveryAddress) {
+      json(res, 400, { error: 'Delivery address required for RV.' });
+      return;
+    }
+  }
+
+  const bookingId = generateBookingId();
+  let paymentResult;
+  try {
+    paymentResult = await createPaymentLink(pricing, body.customer, bookingId);
+  } catch (err: any) {
+    console.error('[agent-checkout] Square error:', err.message);
+    json(res, 502, { error: 'Failed to create Square payment link.' });
+    return;
+  }
+
+  const booking = createBooking({
+    id: bookingId,
+    equipment: equipmentKey,
+    equipmentLabel: pricing.equipment.label,
+    dates,
+    numDays,
+    customer: body.customer,
+    subtotal: pricing.subtotal,
+    deposit: pricing.deposit,
+    balance: pricing.balance,
+    addOns: pricing.addOns,
+    details: body.details || '',
+    squareOrderId: paymentResult.orderId,
+    squarePaymentLinkId: paymentResult.paymentLinkId,
+    paymentUrl: paymentResult.paymentUrl,
+    deliveryAddress,
+    agentInitiated: true,
+  });
+
+  const publicBase = process.env.BOOKING_PUBLIC_BASE_URL || 'https://chat.sheridantrailerrentals.us';
+  const licenseUploadUrl = `${publicBase}/license/${booking.id}`;
+
+  console.log(`[agent-checkout] Created ${booking.id} for ${body.customer.firstName} ${body.customer.lastName} — payment ${paymentResult.paymentUrl}`);
+
+  json(res, 200, {
+    bookingId: booking.id,
+    paymentUrl: paymentResult.paymentUrl,
+    orderId: paymentResult.orderId,
+    licenseUploadUrl,
+    pricing: {
+      subtotal: pricing.subtotal,
+      deposit: pricing.deposit,
+      balance: pricing.balance,
+      chargeNow: pricing.chargeNow,
+      paymentMode: pricing.paymentMode,
+      lineItems: pricing.lineItems,
+    },
+  });
+}
+
 async function handleSquareWebhook(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await readBody(req);
 
@@ -513,6 +670,25 @@ async function handleSquareWebhook(req: http.IncomingMessage, res: http.ServerRe
       console.error(`[webhook] CRITICAL: Customer confirmation email failed after retries: ${err.message}. Booking ${updatedBooking.id} — manual follow-up required.`),
     );
     notifyOwnerOnce(updatedBooking, 'webhook');
+
+    // Agent-initiated bookings collect the license AFTER payment via a Quo
+    // SMS to the customer's phone. Send once per booking (idempotent on the
+    // license_sms_sent_at stamp + the licenseFileId check).
+    if (updatedBooking.agentInitiated && !updatedBooking.licenseFileId && !updatedBooking.licenseSmsSentAt) {
+      const publicBase = process.env.BOOKING_PUBLIC_BASE_URL || 'https://chat.sheridantrailerrentals.us';
+      const uploadUrl = `${publicBase}/license/${updatedBooking.id}`;
+      const smsBody = `Sheridan Rentals — payment received for ${updatedBooking.equipmentLabel} on ${updatedBooking.dates[0]}. Upload your driver's license here to lock in pickup: ${uploadUrl}`;
+      sendQuoSMS(updatedBooking.customer.phone, smsBody).then(result => {
+        if (result.ok) {
+          markLicenseSmsSent(updatedBooking.id);
+          console.log(`[webhook] License-upload SMS sent for ${updatedBooking.id} -> ${updatedBooking.customer.phone}`);
+        } else {
+          console.error(`[webhook] License SMS failed for ${updatedBooking.id} (status ${result.status}): ${result.error}`);
+        }
+      }).catch(err =>
+        console.error(`[webhook] License SMS threw for ${updatedBooking.id}: ${err.message}`),
+      );
+    }
 
   } catch (err: any) {
     console.error(`[webhook] Parse error: ${err.message}`);
@@ -641,6 +817,106 @@ async function handleUpload(req: http.IncomingMessage, res: http.ServerResponse)
     console.error(`[upload] Write error: ${err.message}`);
     json(res, 500, { error: 'Upload failed' });
   }
+}
+
+async function handleUploadLicenseByBooking(req: http.IncomingMessage, res: http.ServerResponse, bookingId: string): Promise<void> {
+  if (!isSafePathSegment(bookingId)) { json(res, 400, { error: 'Invalid bookingId' }); return; }
+  const booking = getBooking(bookingId);
+  if (!booking) { json(res, 404, { error: 'Booking not found' }); return; }
+  if (booking.status === 'cancelled') { json(res, 410, { error: 'This booking was cancelled.' }); return; }
+
+  let parsed: ParsedUpload;
+  try {
+    parsed = await parseMultipartFormData(req);
+  } catch (err: any) {
+    const status = err.message === 'Payload too large' ? 413 : 400;
+    json(res, status, { error: err.message });
+    return;
+  }
+  const { file } = parsed;
+  if (!file) { json(res, 400, { error: 'No file uploaded' }); return; }
+
+  const uploadedExt = path.extname(file.name).toLowerCase();
+  const typeOk = ALLOWED_IMAGE_TYPES.has(file.contentType);
+  const extOk = ALLOWED_EXTENSIONS.has(uploadedExt);
+  if (!typeOk && !extOk) {
+    json(res, 400, { error: 'Unsupported image type. Use JPEG, PNG, WebP, or HEIC.' });
+    return;
+  }
+
+  const fileId = `lic-${Date.now()}-${Math.random().toString(36).substring(2, 8)}${safeExtension(file.name)}`;
+  try {
+    const dir = path.join(UPLOAD_DIR, bookingId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, fileId), file.data);
+    setLicensePhoto(bookingId, fileId);
+    console.log(`[upload-license] Saved ${bookingId}/${fileId} (${file.data.length} bytes)`);
+    json(res, 200, { ok: true, bookingId, fileId });
+  } catch (err: any) {
+    console.error(`[upload-license] Write error: ${err.message}`);
+    json(res, 500, { error: 'Upload failed' });
+  }
+}
+
+function handleLicensePage(res: http.ServerResponse, bookingId: string): void {
+  if (!isSafePathSegment(bookingId)) {
+    res.writeHead(400, { 'Content-Type': 'text/html' });
+    res.end('<h1>Invalid booking ID</h1>');
+    return;
+  }
+  const booking = getBooking(bookingId);
+  if (!booking) {
+    res.writeHead(404, { 'Content-Type': 'text/html' });
+    res.end('<h1>Booking not found</h1>');
+    return;
+  }
+  const alreadyUploaded = !!booking.licenseFileId;
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Upload License — Sheridan Rentals</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#111;background:#fafafa}
+h1{font-size:22px;margin-bottom:6px}
+.muted{color:#666;font-size:14px;margin-bottom:24px}
+.card{background:#fff;border:1px solid #e5e5e5;border-radius:10px;padding:20px}
+.row{display:flex;justify-content:space-between;font-size:14px;margin:4px 0;color:#333}
+.row strong{color:#111}
+input[type=file]{display:block;margin:18px 0;font-size:15px;width:100%}
+button{background:#0a7;color:#fff;border:0;border-radius:6px;padding:14px 18px;font-size:16px;font-weight:600;width:100%;cursor:pointer}
+button:disabled{background:#aaa;cursor:wait}
+#status{margin-top:18px;font-size:15px}
+.ok{color:#0a7}
+.err{color:#c33}
+</style>
+</head>
+<body>
+<h1>Upload your driver's license</h1>
+<p class="muted">${alreadyUploaded ? 'We already have your license on file — you can re-upload if you need to replace it.' : 'Last step. Take a photo of your driver\'s license (front side) and submit.'}</p>
+<div class="card">
+<div class="row"><span>Booking</span><strong>${booking.id}</strong></div>
+<div class="row"><span>Equipment</span><strong>${booking.equipmentLabel}</strong></div>
+<div class="row"><span>Dates</span><strong>${booking.dates.join(', ')}</strong></div>
+<form id="lf" enctype="multipart/form-data">
+<input type="file" name="file" accept="image/*" capture="environment" required>
+<button type="submit" id="btn">Upload license</button>
+</form>
+<div id="status"></div>
+</div>
+<script>
+const f=document.getElementById('lf');const b=document.getElementById('btn');const s=document.getElementById('status');
+f.addEventListener('submit',async e=>{e.preventDefault();b.disabled=true;b.textContent='Uploading...';s.textContent='';
+try{const fd=new FormData(f);const r=await fetch('/api/upload-license/${booking.id}',{method:'POST',body:fd});const j=await r.json();
+if(r.ok){s.className='ok';s.textContent='✓ License received. You\\'re all set. We\\'ll be in touch about pickup.';b.textContent='Done';}
+else{s.className='err';s.textContent='Error: '+(j.error||r.status);b.disabled=false;b.textContent='Upload license';}
+}catch(err){s.className='err';s.textContent='Upload failed: '+err.message;b.disabled=false;b.textContent='Upload license';}});
+</script>
+</body>
+</html>`;
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(html);
 }
 
 async function handleUploadInspection(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -878,6 +1154,40 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         return;
       }
       await handleCheckout(req, res);
+      return;
+    }
+
+    // POST /api/agent-checkout — Andy creates a booking from a chat conversation.
+    // Requires X-Agent-Token header matching AGENT_API_TOKEN env (set in .env).
+    // Skips license-photo-on-disk requirement; license is collected via a
+    // post-payment SMS to the customer's phone.
+    if (req.method === 'POST' && url === '/api/agent-checkout') {
+      const supplied = req.headers['x-agent-token'];
+      const expected = process.env.AGENT_API_TOKEN;
+      if (!expected) {
+        json(res, 503, { error: 'Agent checkout disabled — AGENT_API_TOKEN not configured on server.' });
+        return;
+      }
+      if (typeof supplied !== 'string' || supplied !== expected) {
+        json(res, 401, { error: 'Unauthorized — missing or invalid X-Agent-Token.' });
+        return;
+      }
+      await handleAgentCheckout(req, res);
+      return;
+    }
+
+    // POST /api/upload-license/:bookingId — customer-facing license upload
+    // (called from the /license/:id HTML page, no auth, throttled by IP).
+    if (req.method === 'POST' && url.startsWith('/api/upload-license/')) {
+      const id = url.split('/api/upload-license/')[1]?.split('?')[0] || '';
+      await handleUploadLicenseByBooking(req, res, id);
+      return;
+    }
+
+    // GET /license/:bookingId — mobile-friendly license upload page
+    if (req.method === 'GET' && url.startsWith('/license/')) {
+      const id = url.split('/license/')[1]?.split('?')[0] || '';
+      handleLicensePage(res, id);
       return;
     }
 
