@@ -29,6 +29,14 @@
 - **Rate**: $250 flat
 - Covers pickup + dropoff within 60 miles of Tomball, TX
 
+## After-Hours Pickup / Drop-Off
+
+- **Standard hours**: 8:00 AM – 8:00 PM, 7 days a week (matches GBP)
+- **After-hours fee**: **$25 per occurrence** (each pickup OR drop-off outside 8 AM – 8 PM)
+- Applies to all equipment; Car Hauler is the most common request and we accommodate 24/7
+- Quote it when customer asks for late-night/early-morning pickup or drop-off
+- Add the fee as a line item in the booking notes and collect on pickup or via Square invoice
+
 ## Payment Terms
 
 ### RV Camper Payment Policy
@@ -45,4 +53,4 @@
 - All payments via Square online checkout
 - Payment confirmation unlocks lock code for trailer access
 - Refundable security deposits ($250 RV, $50 haulers/trailers) refunded upon return in good condition
-- Always open — no restricted hours
+- Standard pickup/drop-off hours: 8:00 AM – 8:00 PM, 7 days a week. After-hours = $25 per occurrence (see above)

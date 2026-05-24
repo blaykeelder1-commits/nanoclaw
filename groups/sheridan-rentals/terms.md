@@ -34,7 +34,7 @@
 
 ### General
 - Book and pay at sheridantrailerrentals.us/form/
-- We're always open — no restricted pickup/dropoff hours
+- Standard pickup/drop-off hours: 8:00 AM – 8:00 PM, 7 days a week. After-hours pickup or drop-off available for $25 per occurrence
 
 ## Cancellation Policy
 - Contact us as soon as possible if you need to cancel

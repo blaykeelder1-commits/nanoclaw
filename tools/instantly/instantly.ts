@@ -66,7 +66,7 @@ async function api<T = unknown>(
   const resp = await fetch(url, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: method === 'POST' ? JSON.stringify(body ?? {}) : (body ? JSON.stringify(body) : undefined),
   });
 
   if (!resp.ok) {

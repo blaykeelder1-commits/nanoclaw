@@ -38,7 +38,10 @@ For **Car Hauler** and **Landscaping Trailer**: Full payment + deposit is requir
 Once full payment is received, you get the lock code to access the equipment. Book at sheridantrailerrentals.us/form/
 
 ## What are your hours?
-We're always open — no restricted hours. Pick up and drop off at your convenience.
+Standard pickup and drop-off hours are **8:00 AM – 8:00 PM, 7 days a week**. Online booking is open 24/7. After-hours pickup or drop-off (before 8 AM or after 8 PM) is available for a **$25 fee per occurrence** — the Car Hauler is the most common late-night request and we accommodate 24/7 with this small surcharge.
+
+## Can I pick up or drop off after hours?
+Yes — $25 per occurrence (each pickup OR drop-off scheduled outside 8 AM – 8 PM). The fee covers our time accommodating the off-hours window. Mention it when booking or text us at (817) 587-1460.
 
 ## What if I need to extend my rental?
 Just text or call us. We'll check availability and extend your booking if the equipment is open.
