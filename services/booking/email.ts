@@ -192,9 +192,16 @@ export async function sendCustomerConfirmation(booking: Booking): Promise<void> 
               <tr><td style="padding: 4px 0; font-weight: 600;">Equipment:</td><td>${booking.equipmentLabel}</td></tr>
               <tr><td style="padding: 4px 0; font-weight: 600;">Dates:</td><td>${dateRange}</td></tr>
               <tr><td style="padding: 4px 0; font-weight: 600;">Duration:</td><td>${unitLabel(booking)}</td></tr>
+              ${booking.addOns.length > 0 ? `<tr><td style="padding: 4px 0; font-weight: 600;">Add-Ons:</td><td>${booking.addOns.join(', ')}</td></tr>` : ''}
               <tr><td style="padding: 4px 0; font-weight: 600; color: #16a34a;">Amount Paid:</td><td style="color: #16a34a;">$${amountPaid.toFixed(2)}</td></tr>
               ${balanceRow}
             </table>
+          </div>
+
+          <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 16px; margin: 16px 0;">
+            <h3 style="margin: 0 0 8px; color: #1d4ed8; font-size: 15px;">📍 Pickup / Return Location</h3>
+            <p style="margin: 0; font-size: 14px; color: #374151; font-weight: 600;">14235 Alice Road, Tomball, TX 77377</p>
+            ${booking.deliveryAddress ? `<p style="margin: 8px 0 0; font-size: 13px; color: #6b7280;"><strong>Delivery to:</strong> ${escapeHtml(booking.deliveryAddress)}</p>` : ''}
           </div>
 
           <h3 style="color: #374151; margin: 20px 0 8px;">Next Steps</h3>
