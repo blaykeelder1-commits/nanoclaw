@@ -201,21 +201,21 @@ export function isHoliday(dateStr: string): boolean {
 }
 
 // ── Promo Codes ─────────────────────────────────────────────────────
-// Owner-distributed codes. RIVER = self-tow mode (no delivery, higher deposit, flat $175/night).
+// Owner-distributed codes. RIVER = 10% off the rental subtotal (not the
+// refundable deposit). Valid on the RV camper and the car hauler only —
+// NOT the landscaping/utility trailer. The code never changes fulfillment:
+// the camper is always delivery-only.
 
 interface PromoOverrides {
-  rate?: number;
-  deposit?: number;
-  removeDelivery?: boolean;
+  /** Percentage off the rental + add-ons subtotal (deposit is never discounted). */
+  percentOff?: number;
 }
 
 const PROMO_CODES: Record<string, { appliesTo: EquipmentKey[]; overrides: PromoOverrides }> = {
   RIVER: {
-    appliesTo: ['rv'],
+    appliesTo: ['rv', 'carhauler'],
     overrides: {
-      rate: 175,
-      deposit: 500,
-      removeDelivery: true,
+      percentOff: 10,
     },
   },
 };
@@ -255,21 +255,17 @@ export function calculatePrice(
 
   const promo = resolvePromoCode(opts?.promoCode, equipmentKey);
 
-  // If promo removes delivery, filter it out of requested add-ons
-  let effectiveAddOns = [...addOnKeys];
-  if (promo?.removeDelivery) {
-    effectiveAddOns = effectiveAddOns.filter(k => k !== 'delivery');
-  }
-
+  const effectiveAddOns = [...addOnKeys];
   const lineItems: LineItem[] = [];
-  const baseRate = promo?.rate ?? equipment.rate;
+  const baseRate = equipment.rate;
 
-  // RV: per-night holiday pricing when no promo is applied.
-  // With a promo, the promo's flat rate overrides everything.
+  // RV: per-night holiday pricing. The RIVER promo is a flat percentage off the
+  // final subtotal, so it does not change per-night rates — holiday pricing still
+  // applies underneath it.
   // A "night" is the gap between two consecutive selected dates — the last
   // selected date is the drop-off-out morning, not a night. So holiday detection
   // runs on dates[0 .. n-2], which matches numDays (= dates.length - 1 for RV).
-  if (equipmentKey === 'rv' && opts?.dates && opts.dates.length > 1 && !promo) {
+  if (equipmentKey === 'rv' && opts?.dates && opts.dates.length > 1) {
     let regularCount = 0;
     let holidayCount = 0;
     const nightDates = opts.dates.slice(0, -1);
@@ -342,12 +338,28 @@ export function calculatePrice(
     }
   }
 
+  const grossSubtotal = lineItems.reduce((sum, item) => sum + item.total, 0);
+
+  // Promo discount: a flat percentage off the rental + add-ons subtotal.
+  // The refundable security deposit is never discounted. Recorded as a negative
+  // line item so the breakdown's lineItems always sum to the net subtotal.
+  let discount: { label: string; amount: number } | undefined;
+  if (promo?.percentOff) {
+    const amount = Math.round((grossSubtotal * promo.percentOff) / 100 * 100) / 100;
+    if (amount > 0) {
+      discount = { label: `${opts?.promoCode?.toUpperCase().trim()} promo — ${promo.percentOff}% off`, amount };
+      lineItems.push({
+        name: discount.label,
+        quantity: 1,
+        unitPrice: -amount,
+        total: -amount,
+      });
+    }
+  }
+
   const subtotal = lineItems.reduce((sum, item) => sum + item.total, 0);
 
-  // Deposit: promo overrides > equipment default.
-  // Delivery is mandatory for RV at the server level; pickup mode is only reachable via a promo
-  // that sets its own deposit (e.g. RIVER). So the equipment default always holds for non-promo flows.
-  const deposit: number = promo?.deposit ?? equipment.deposit;
+  const deposit: number = equipment.deposit;
 
   // Payment mode: customer can choose full; same-week RV always full; otherwise deposit allowed
   let paymentMode: PaymentMode;
@@ -371,6 +383,7 @@ export function calculatePrice(
     deposit,
     balance,
     addOns: validAddOns,
+    discount,
     paymentMode,
     chargeNow,
   };
@@ -378,41 +391,62 @@ export function calculatePrice(
 
 // ── Square Line Items Builder ───────────────────────────────────────
 
-export function buildSquareLineItems(pricing: PriceBreakdown): Array<{
+interface SquareLineItem {
   name: string;
   quantity: string;
   base_price_money: { amount: number; currency: string };
-}> {
+}
+
+interface SquareOrderDiscount {
+  uid: string;
+  name: string;
+  amount_money: { amount: number; currency: string };
+  scope: 'ORDER';
+}
+
+export function buildSquareLineItems(pricing: PriceBreakdown): {
+  lineItems: SquareLineItem[];
+  discounts: SquareOrderDiscount[];
+} {
   if (pricing.paymentMode === 'deposit') {
-    // Deposit-only checkout: single line item for the security deposit
-    return [{
-      name: `${pricing.equipment.label} — Refundable Security Deposit (balance of $${pricing.subtotal.toFixed(2)} due before rental)`,
-      quantity: '1',
-      base_price_money: {
-        amount: Math.round(pricing.deposit * 100),
-        currency: 'USD',
-      },
-    }];
+    // Deposit-only checkout: single line item for the security deposit.
+    // The promo discount applies to the rental balance (paid later), not the
+    // deposit charged now — so no discount is attached here.
+    return {
+      lineItems: [{
+        name: `${pricing.equipment.label} — Refundable Security Deposit (balance of $${pricing.subtotal.toFixed(2)} due before rental)`,
+        quantity: '1',
+        base_price_money: { amount: Math.round(pricing.deposit * 100), currency: 'USD' },
+      }],
+      discounts: [],
+    };
   }
 
-  // Full payment: all line items + deposit
-  const items = pricing.lineItems.map((item) => ({
-    name: item.name,
-    quantity: item.quantity.toString(),
-    base_price_money: {
-      amount: Math.round(item.unitPrice * 100),
-      currency: 'USD',
-    },
-  }));
+  // Full payment: positive line items + deposit. The promo discount (a negative
+  // line item in pricing.lineItems) is represented as a Square order-level
+  // fixed-amount discount, since Square rejects negative line-item prices.
+  const lineItems: SquareLineItem[] = pricing.lineItems
+    .filter((item) => item.total >= 0)
+    .map((item) => ({
+      name: item.name,
+      quantity: item.quantity.toString(),
+      base_price_money: { amount: Math.round(item.unitPrice * 100), currency: 'USD' },
+    }));
 
-  items.push({
+  lineItems.push({
     name: 'Refundable Security Deposit',
     quantity: '1',
-    base_price_money: {
-      amount: Math.round(pricing.deposit * 100),
-      currency: 'USD',
-    },
+    base_price_money: { amount: Math.round(pricing.deposit * 100), currency: 'USD' },
   });
 
-  return items;
+  const discounts: SquareOrderDiscount[] = pricing.discount
+    ? [{
+        uid: 'promo-discount',
+        name: pricing.discount.label,
+        amount_money: { amount: Math.round(pricing.discount.amount * 100), currency: 'USD' },
+        scope: 'ORDER',
+      }]
+    : [];
+
+  return { lineItems, discounts };
 }

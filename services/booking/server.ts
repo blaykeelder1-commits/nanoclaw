@@ -17,7 +17,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { readEnvFile } from './env.js';
-import { EQUIPMENT, calculatePrice, resolvePromoCode } from './pricing.js';
+import { EQUIPMENT, calculatePrice } from './pricing.js';
 import { getBookedSlots, datesAreAvailable, createBookingEvent, deleteCalendarEvent } from './calendar.js';
 import { createPaymentLink, checkOrderPayment, refundPayment } from './square.js';
 import {
@@ -90,6 +90,16 @@ async function notifyOwnerOnce(booking: Booking, source: 'webhook' | 'watchdog')
 
 let PORT = 3200;
 let ALLOWED_ORIGINS: string[] = ['https://sheridantrailerrentals.us'];
+
+/**
+ * Today's date (YYYY-MM-DD) in the business timezone (America/Chicago).
+ * MUST NOT use new Date().getDate() etc. — the VPS runs UTC, so process-local
+ * date components roll over at ~7pm Central and wrongly reject same-day bookings
+ * as "past." sv-SE locale yields ISO YYYY-MM-DD. See calendar.ts toChicagoDate().
+ */
+function chicagoToday(): string {
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Chicago' });
+}
 
 // ── Load env ────────────────────────────────────────────────────────
 
@@ -242,11 +252,10 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
     json(res, 400, { error: 'No dates selected' });
     return;
   }
-  // Validate date format and reject past dates
-  // Use local date (TZ=America/Chicago) — .toISOString() returns UTC which
-  // causes today's date to be rejected as "past" after 7pm CDT
-  const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  // Validate date format and reject past dates.
+  // "today" is computed in America/Chicago — relying on the process TZ rejected
+  // genuine same-day bookings after ~7pm Central because the VPS runs UTC.
+  const today = chicagoToday();
   for (const d of body.dates) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
       json(res, 400, { error: 'Invalid date format. Use YYYY-MM-DD.' });
@@ -317,25 +326,20 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
   const promoCode = body.promoCode;
   const pricing = calculatePrice(equipmentKey, numDays, body.addOns || [], { dates, paymentMode, promoCode });
 
-  // RV: delivery is mandatory unless a promo (e.g. RIVER) explicitly removes it.
-  // No self-service pickup — customers must contact the owner to get a promo code.
+  // RV is always delivery-only — there is no self-service pickup option.
   const deliveryAddress = (body.deliveryAddress || '').trim();
   if (equipmentKey === 'rv') {
-    const promo = resolvePromoCode(promoCode, equipmentKey);
-    const promoRemovesDelivery = promo?.removeDelivery === true;
-    if (!promoRemovesDelivery && !pricing.addOns.includes('delivery')) {
+    if (!pricing.addOns.includes('delivery')) {
       json(res, 400, { error: 'Delivery is required for RV rentals.' });
       return;
     }
-    if (pricing.addOns.includes('delivery')) {
-      if (!deliveryAddress) {
-        json(res, 400, { error: 'Delivery address is required for RV rentals.' });
-        return;
-      }
-      if (deliveryAddress.length > 500) {
-        json(res, 400, { error: 'Delivery address is too long (max 500 characters).' });
-        return;
-      }
+    if (!deliveryAddress) {
+      json(res, 400, { error: 'Delivery address is required for RV rentals.' });
+      return;
+    }
+    if (deliveryAddress.length > 500) {
+      json(res, 400, { error: 'Delivery address is too long (max 500 characters).' });
+      return;
     }
   }
 
@@ -473,8 +477,7 @@ async function handleAgentCheckout(req: http.IncomingMessage, res: http.ServerRe
     json(res, 400, { error: 'No dates selected' });
     return;
   }
-  const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const today = chicagoToday();
   for (const d of body.dates) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
       json(res, 400, { error: 'Invalid date format. Use YYYY-MM-DD.' });
@@ -533,13 +536,11 @@ async function handleAgentCheckout(req: http.IncomingMessage, res: http.ServerRe
 
   const deliveryAddress = (body.deliveryAddress || '').trim();
   if (equipmentKey === 'rv') {
-    const promo = resolvePromoCode(promoCode, equipmentKey);
-    const promoRemovesDelivery = promo?.removeDelivery === true;
-    if (!promoRemovesDelivery && !pricing.addOns.includes('delivery')) {
-      json(res, 400, { error: 'RV bookings require delivery (or a valid pickup promo code).' });
+    if (!pricing.addOns.includes('delivery')) {
+      json(res, 400, { error: 'RV bookings require delivery.' });
       return;
     }
-    if (pricing.addOns.includes('delivery') && !deliveryAddress) {
+    if (!deliveryAddress) {
       json(res, 400, { error: 'Delivery address required for RV.' });
       return;
     }

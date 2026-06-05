@@ -33,10 +33,13 @@ export interface PriceBreakdown {
   equipment: EquipmentConfig;
   numDays: number;
   lineItems: LineItem[];
+  /** Rental + add-ons, NET of any promo discount (already reflected in lineItems). */
   subtotal: number;
   deposit: number;
   balance: number;
   addOns: string[];
+  /** Promo discount applied to the rental subtotal (not the deposit), if any. */
+  discount?: { label: string; amount: number };
   /** What the customer pays at checkout — full amount or deposit only */
   paymentMode: PaymentMode;
   /** Amount charged to Square right now */

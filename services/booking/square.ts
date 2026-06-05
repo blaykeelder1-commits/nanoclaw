@@ -67,7 +67,7 @@ export async function createPaymentLink(
   bookingId: string,
 ): Promise<{ paymentUrl: string; paymentLinkId: string; orderId: string }> {
   const cfg = getConfig();
-  const lineItems = buildSquareLineItems(pricing);
+  const { lineItems, discounts } = buildSquareLineItems(pricing);
   const idempotencyKey = `sheridan-${bookingId}`;
 
   const redirectUrl = process.env.BOOKING_CONFIRMATION_URL
@@ -78,6 +78,7 @@ export async function createPaymentLink(
     order: {
       location_id: cfg.locationId,
       line_items: lineItems,
+      ...(discounts.length > 0 ? { discounts } : {}),
       metadata: {
         booking_id: bookingId,
       },

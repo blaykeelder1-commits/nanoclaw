@@ -133,7 +133,7 @@ describe('buildSquareLineItems — full mode', () => {
     const pricing = calculatePrice('rv', 3, ['generator']);
     expect(pricing.paymentMode).toBe('full');
 
-    const items = buildSquareLineItems(pricing);
+    const items = buildSquareLineItems(pricing).lineItems;
     // 2 rental items (base + generator) + 1 deposit = 3
     expect(items).toHaveLength(3);
 
@@ -155,7 +155,7 @@ describe('buildSquareLineItems — full mode', () => {
 
   it('all amounts are in cents (USD)', () => {
     const pricing = calculatePrice('carhauler', 2);
-    const items = buildSquareLineItems(pricing);
+    const items = buildSquareLineItems(pricing).lineItems;
     for (const item of items) {
       expect(item.base_price_money.currency).toBe('USD');
       expect(Number.isInteger(item.base_price_money.amount)).toBe(true);
@@ -171,7 +171,7 @@ describe('buildSquareLineItems — deposit mode', () => {
     const pricing = calculatePrice('rv', 3, [], { dates });
     expect(pricing.paymentMode).toBe('deposit');
 
-    const items = buildSquareLineItems(pricing);
+    const items = buildSquareLineItems(pricing).lineItems;
     expect(items).toHaveLength(1);
     expect(items[0].name).toContain('Refundable Security Deposit');
     expect(items[0].name).toContain('balance');
@@ -183,7 +183,7 @@ describe('buildSquareLineItems — deposit mode', () => {
   it('deposit line item includes the balance amount in the name', () => {
     const dates = [daysFromNow(14), daysFromNow(15), daysFromNow(16)];
     const pricing = calculatePrice('rv', 3, [], { dates });
-    const items = buildSquareLineItems(pricing);
+    const items = buildSquareLineItems(pricing).lineItems;
     // Balance = subtotal = 150*3 = 450
     expect(items[0].name).toContain('$450.00');
   });
@@ -200,7 +200,7 @@ describe('Integration — booking flow', () => {
     expect(pricing.chargeNow).toBe(pricing.deposit); // $250
     expect(pricing.balance).toBe(pricing.subtotal);   // $450 + $250 delivery = $700
 
-    const items = buildSquareLineItems(pricing);
+    const items = buildSquareLineItems(pricing).lineItems;
     expect(items).toHaveLength(1);
     expect(items[0].base_price_money.amount).toBe(250 * 100);
   });
@@ -213,7 +213,7 @@ describe('Integration — booking flow', () => {
     expect(pricing.chargeNow).toBe(pricing.subtotal + pricing.deposit);
     expect(pricing.balance).toBe(0);
 
-    const items = buildSquareLineItems(pricing);
+    const items = buildSquareLineItems(pricing).lineItems;
     // Base rental + delivery + deposit = 3
     expect(items).toHaveLength(3);
   });
@@ -226,7 +226,7 @@ describe('Integration — booking flow', () => {
     expect(pricing.chargeNow).toBe(pricing.subtotal + pricing.deposit); // $130 + $50
     expect(pricing.balance).toBe(0);
 
-    const items = buildSquareLineItems(pricing);
+    const items = buildSquareLineItems(pricing).lineItems;
     // Base rental + deposit = 2
     expect(items).toHaveLength(2);
     expect(items[0].name).toContain('Car Hauler');
@@ -243,7 +243,7 @@ describe('Integration — booking flow', () => {
     expect(pricing.chargeNow).toBe(300 + 170 + 250 + 250); // subtotal + deposit
     expect(pricing.deposit).toBe(250);
 
-    const items = buildSquareLineItems(pricing);
+    const items = buildSquareLineItems(pricing).lineItems;
     expect(items).toHaveLength(4); // base + generator + delivery + deposit
   });
 });
@@ -289,61 +289,61 @@ describe('calculatePrice — RV holiday pricing', () => {
 
 // ── Promo code (RIVER) ───────────────────────────────────────────────
 
-describe('calculatePrice — RIVER promo', () => {
-  it('applies $175 flat rate, removes delivery, $500 deposit', () => {
-    const dates = ['2035-07-04', '2035-07-05']; // even on holiday
+describe('calculatePrice — RIVER promo (10% off)', () => {
+  it('takes 10% off the RV rental + add-ons subtotal; deposit & delivery unchanged', () => {
+    const dates = ['2035-03-10', '2035-03-11']; // non-holiday
     const pricing = calculatePrice('rv', 2, ['delivery', 'generator'], {
       dates,
       paymentMode: 'full',
       promoCode: 'RIVER',
     });
-    expect(pricing.subtotal).toBe(175 * 2 + 85 * 2); // rental + generator (delivery removed)
-    expect(pricing.deposit).toBe(500);
-    expect(pricing.addOns).not.toContain('delivery');
+    const gross = 150 * 2 + 85 * 2 + 250; // base + generator + delivery
+    expect(pricing.subtotal).toBe(Math.round(gross * 0.9 * 100) / 100);
+    expect(pricing.deposit).toBe(250);            // unchanged — deposit is never discounted
+    expect(pricing.addOns).toContain('delivery'); // RIVER no longer removes delivery
     expect(pricing.addOns).toContain('generator');
-    // Rate is flat $175/night, not split into holiday/regular
-    expect(pricing.lineItems[0].unitPrice).toBe(175);
+    expect(pricing.discount?.amount).toBe(Math.round(gross * 0.1 * 100) / 100);
   });
 
-  it('applies $175 on non-holiday dates too (flat rate)', () => {
+  it('applies to the car hauler', () => {
     const dates = ['2035-03-10', '2035-03-11'];
-    const pricing = calculatePrice('rv', 2, [], {
-      dates,
-      paymentMode: 'full',
-      promoCode: 'RIVER',
-    });
-    expect(pricing.subtotal).toBe(175 * 2);
-    expect(pricing.deposit).toBe(500);
+    const pricing = calculatePrice('carhauler', 2, [], { dates, promoCode: 'RIVER' });
+    const gross = 65 * 2;
+    expect(pricing.subtotal).toBe(gross * 0.9);
+    expect(pricing.deposit).toBe(50);
+    expect(pricing.discount?.amount).toBe(gross * 0.1);
   });
 
   it('is case-insensitive', () => {
-    const dates = ['2035-03-10'];
-    const pricing = calculatePrice('rv', 1, [], {
-      dates,
-      paymentMode: 'full',
-      promoCode: 'river',
-    });
-    expect(pricing.subtotal).toBe(175);
+    const pricing = calculatePrice('carhauler', 1, [], { dates: ['2035-03-10'], promoCode: 'river' });
+    expect(pricing.subtotal).toBe(65 * 0.9);
   });
 
-  it('does not apply to carhauler', () => {
-    const dates = ['2035-03-10'];
-    const pricing = calculatePrice('carhauler', 1, [], {
-      dates,
-      promoCode: 'RIVER',
-    });
-    expect(pricing.subtotal).toBe(65);
-    expect(pricing.deposit).toBe(50);
+  it('does NOT apply to the landscaping/utility trailer', () => {
+    const pricing = calculatePrice('landscaping', 1, [], { dates: ['2035-03-10'], promoCode: 'RIVER' });
+    expect(pricing.subtotal).toBe(50);
+    expect(pricing.discount).toBeUndefined();
   });
 
   it('unknown promo code is silently ignored', () => {
-    const dates = ['2035-03-10'];
-    const pricing = calculatePrice('rv', 1, [], {
-      dates,
+    const pricing = calculatePrice('rv', 2, ['delivery'], {
+      dates: ['2035-03-10', '2035-03-11'],
       paymentMode: 'full',
       promoCode: 'NOPE',
     });
-    expect(pricing.subtotal).toBe(150);
-    expect(pricing.deposit).toBe(250); // equipment default; server rejects missing delivery
+    expect(pricing.discount).toBeUndefined();
+    expect(pricing.deposit).toBe(250);
+  });
+
+  it('discount reaches Square as an ORDER-scope discount (no negative line items)', () => {
+    const pricing = calculatePrice('carhauler', 2, [], {
+      dates: ['2035-03-10', '2035-03-11'],
+      promoCode: 'RIVER',
+    });
+    const { lineItems, discounts } = buildSquareLineItems(pricing);
+    expect(discounts).toHaveLength(1);
+    expect(discounts[0].scope).toBe('ORDER');
+    expect(discounts[0].amount_money.amount).toBe(Math.round(65 * 2 * 0.1 * 100)); // cents
+    expect(lineItems.every((li) => li.base_price_money.amount >= 0)).toBe(true);
   });
 });

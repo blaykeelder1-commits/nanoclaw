@@ -34,6 +34,36 @@ function toChicagoDate(date: Date): string {
   return date.toLocaleDateString('sv-SE', { timeZone: 'America/Chicago' });
 }
 
+/** Offset of America/Chicago from UTC, in minutes, at the given instant (handles DST). */
+function chicagoOffsetMinutes(at: Date): number {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const p = Object.fromEntries(dtf.formatToParts(at).map((x) => [x.type, x.value]));
+  const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+  return (asUTC - at.getTime()) / 60000;
+}
+
+/**
+ * Absolute instant of 00:00 America/Chicago on the given YYYY-MM-DD.
+ * Querying freeBusy with UTC-midnight (`...T00:00:00Z`) boundaries clamps all-day
+ * events to UTC midnight, which then mis-converts to the prior Chicago day and
+ * silently under-blocks single-day rentals at checkout. Using the true Chicago
+ * day boundary keeps availability and checkout in agreement.
+ */
+function chicagoDayStart(dateStr: string): Date {
+  const utcMidnight = Date.parse(`${dateStr}T00:00:00Z`);
+  const offMin = chicagoOffsetMinutes(new Date(utcMidnight));
+  return new Date(utcMidnight - offMin * 60000);
+}
+
+function addDaysStr(dateStr: string, n: number): string {
+  const d = new Date(Date.parse(`${dateStr}T00:00:00Z`) + n * 86_400_000);
+  return d.toISOString().slice(0, 10);
+}
+
 // ── Free/Busy Check ─────────────────────────────────────────────────
 
 export async function getBookedSlots(
@@ -47,8 +77,10 @@ export async function getBookedSlots(
   const cal = getCal();
   const res = await cal.freebusy.query({
     requestBody: {
-      timeMin: `${startDate}T00:00:00Z`,
-      timeMax: `${endDate}T23:59:59Z`,
+      // Chicago-local day boundaries (not UTC) so all-day events aren't clamped
+      // to UTC midnight and mis-dated by the timezone offset.
+      timeMin: chicagoDayStart(startDate).toISOString(),
+      timeMax: chicagoDayStart(addDaysStr(endDate, 1)).toISOString(),
       timeZone: 'America/Chicago',
       items: [{ id: equipment.calendarId }],
     },
