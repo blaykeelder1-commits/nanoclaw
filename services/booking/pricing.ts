@@ -40,7 +40,7 @@ export const ADD_ONS: Record<string, AddOn> = {
   },
   freshwater: {
     key: 'freshwater',
-    label: 'Fresh Water Tank Fill',
+    label: 'Fresh Water Tank Refill',
     rate: 25,
     unit: 'flat',
     appliesTo: ['rv'],
@@ -54,7 +54,7 @@ export const ADD_ONS: Record<string, AddOn> = {
   },
   gastank: {
     key: 'gastank',
-    label: '34-Gal Gas Tank (Generator)',
+    label: '30-Gal Fuel Tank (Generator)',
     rate: 150,
     unit: 'flat',
     appliesTo: ['rv'],

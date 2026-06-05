@@ -66,6 +66,8 @@ function addDaysStr(dateStr: string, n: number): string {
 
 // ── Free/Busy Check ─────────────────────────────────────────────────
 
+const FREEBUSY_MAX_DAYS = 60;
+
 export async function getBookedSlots(
   equipmentKey: EquipmentKey,
   startDate: string,
@@ -74,13 +76,21 @@ export async function getBookedSlots(
   const equipment = EQUIPMENT[equipmentKey];
   if (!equipment) throw new Error(`Unknown equipment: ${equipmentKey}`);
 
+  // Clamp end date so the query never exceeds FREEBUSY_MAX_DAYS
+  const startMs = new Date(`${startDate}T00:00:00Z`).getTime();
+  const maxEndMs = startMs + FREEBUSY_MAX_DAYS * 86_400_000;
+  const requestedEndMs = new Date(`${endDate}T23:59:59Z`).getTime();
+  const clampedEndMs = Math.min(requestedEndMs, maxEndMs);
+  const clampedEndDate = new Date(clampedEndMs).toISOString().split('T')[0];
+
   const cal = getCal();
   const res = await cal.freebusy.query({
     requestBody: {
       // Chicago-local day boundaries (not UTC) so all-day events aren't clamped
-      // to UTC midnight and mis-dated by the timezone offset.
+      // to UTC midnight and mis-dated by the timezone offset. End respects the
+      // FREEBUSY_MAX_DAYS clamp above.
       timeMin: chicagoDayStart(startDate).toISOString(),
-      timeMax: chicagoDayStart(addDaysStr(endDate, 1)).toISOString(),
+      timeMax: chicagoDayStart(addDaysStr(clampedEndDate, 1)).toISOString(),
       timeZone: 'America/Chicago',
       items: [{ id: equipment.calendarId }],
     },
