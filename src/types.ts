@@ -222,6 +222,19 @@ export interface ResponseMetric {
   created_at: string;
 }
 
+/** A customer reply Andy drafted and is waiting on Blayke to approve (Draft + Approve loop). */
+export interface PendingReply {
+  id: string;
+  source_chat_jid: string; // the customer's channel JID to deliver the approved reply to
+  channel: string; // quo | gmail | messenger | web (informational)
+  customer_id: string | null;
+  summary: string | null;
+  draft_text: string;
+  status: 'pending' | 'sent' | 'skipped';
+  created_at: string;
+  resolved_at?: string | null;
+}
+
 export type LearningEventType =
   | 'conversion_won'
   | 'conversion_lost'

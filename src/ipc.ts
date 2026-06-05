@@ -11,7 +11,15 @@ import {
   TIMEZONE,
 } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import {
+  createTask,
+  deleteTask,
+  getPendingReply,
+  getTaskById,
+  insertPendingReply,
+  markPendingReplyResolved,
+  updateTask,
+} from './db.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -63,6 +71,7 @@ function formatEscalationMessage(
     customer_id?: string | null;
   },
   sourceGroup: string,
+  pending?: { id: string; draft: string },
 ): string {
   const severity = data.severity || 'urgent';
   const badge = severity === 'critical' ? '🚨' : severity === 'urgent' ? '⚠' : '🔔';
@@ -96,9 +105,27 @@ function formatEscalationMessage(
   }
 
   lines.push('');
-  lines.push('Reply YES / NO / [counter]');
+  if (pending) {
+    // This escalation carries a drafted customer reply — show it and the resolve commands.
+    lines.push(`*Draft reply [${pending.id}]:*`);
+    lines.push(pending.draft);
+    lines.push('');
+    lines.push(`Reply: *approve ${pending.id}* / *edit ${pending.id} <text>* / *skip ${pending.id}*`);
+  } else {
+    lines.push('Reply YES / NO / [counter]');
+  }
 
   return lines.join('\n');
+}
+
+/** Generate a short, human-friendly id for a pending reply (collision-checked). */
+function newPendingReplyId(): string {
+  for (let i = 0; i < 5; i++) {
+    const id = Math.random().toString(36).slice(2, 6);
+    if (!getPendingReply(id)) return id;
+  }
+  // Fallback: longer id is effectively collision-free
+  return Math.random().toString(36).slice(2, 10);
 }
 
 let ipcWatcherRunning = false;
@@ -198,7 +225,24 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   );
                 } else {
                   const [mainJid] = mainEntry;
-                  const text = formatEscalationMessage(data, sourceGroup);
+                  // If this escalation carries a drafted customer reply, persist it so
+                  // Blayke's "approve <id>" on WhatsApp can deliver it to the customer.
+                  let pending: { id: string; draft: string } | undefined;
+                  if (data.draft_reply && data.sourceChatJid) {
+                    const id = newPendingReplyId();
+                    insertPendingReply({
+                      id,
+                      source_chat_jid: data.sourceChatJid,
+                      channel: data.customer_channel || 'unknown',
+                      customer_id: data.customer_id || null,
+                      summary: data.summary,
+                      draft_text: data.draft_reply,
+                      status: 'pending',
+                      created_at: new Date().toISOString(),
+                    });
+                    pending = { id, draft: data.draft_reply };
+                  }
+                  const text = formatEscalationMessage(data, sourceGroup, pending);
                   await deps.sendMessage(mainJid, text);
                   logger.info(
                     {
@@ -211,9 +255,33 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       sourceChatJid: data.sourceChatJid,
                       recommendation: data.recommendation,
                       options: data.options,
+                      pendingReplyId: pending?.id,
                     },
                     'Escalation routed to main',
                   );
+                }
+              } else if (data.type === 'reply_resolution' && data.id && data.action) {
+                // Blayke approved/edited/skipped a drafted customer reply. Main only.
+                if (!isMain) {
+                  logger.warn({ sourceGroup, id: data.id }, 'reply_resolution from non-main group ignored');
+                } else {
+                  const pending = getPendingReply(data.id);
+                  if (!pending) {
+                    logger.warn({ id: data.id }, 'reply_resolution for unknown/expired pending reply');
+                  } else if (pending.status !== 'pending') {
+                    logger.info({ id: data.id, status: pending.status }, 'reply already resolved, ignoring');
+                  } else if (data.action === 'skip') {
+                    markPendingReplyResolved(data.id, 'skipped');
+                    logger.info({ id: data.id }, 'Customer reply skipped');
+                  } else {
+                    const finalText = data.action === 'edit' && data.text ? data.text : pending.draft_text;
+                    await deps.sendMessage(pending.source_chat_jid, finalText);
+                    markPendingReplyResolved(data.id, 'sent');
+                    logger.info(
+                      { audit: 'reply_sent', id: data.id, channel: pending.channel, jid: pending.source_chat_jid, edited: data.action === 'edit' },
+                      'Approved customer reply delivered',
+                    );
+                  }
                 }
               }
               fs.unlinkSync(filePath);

@@ -14,6 +14,7 @@ import {
   MessageVariant,
   NewMessage,
   OutreachLog,
+  PendingReply,
   PipelineHealth,
   RegisteredGroup,
   ResponseMetric,
@@ -423,6 +424,19 @@ function createSchema(database: Database.Database): void {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_variants_category ON message_variants(category, status);
+
+    CREATE TABLE IF NOT EXISTS pending_replies (
+      id TEXT PRIMARY KEY,
+      source_chat_jid TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      customer_id TEXT,
+      summary TEXT,
+      draft_text TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_pending_replies_status ON pending_replies(status, created_at);
   `);
 
   // Add attribution column to conversions (migration for existing DBs)
@@ -1940,6 +1954,35 @@ export function markCustomerReplied(chatJid: string): void {
     `UPDATE response_metrics SET customer_replied = 1
      WHERE id = (SELECT id FROM response_metrics WHERE chat_jid = ? AND customer_replied = 0 ORDER BY created_at DESC LIMIT 1)`,
   ).run(chatJid);
+}
+
+// ── Pending Replies (Draft + Approve loop) ───────────────────────
+
+export function insertPendingReply(data: PendingReply): void {
+  db.prepare(
+    `INSERT INTO pending_replies (id, source_chat_jid, channel, customer_id, summary, draft_text, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    data.id, data.source_chat_jid, data.channel, data.customer_id ?? null,
+    data.summary ?? null, data.draft_text, data.status, data.created_at,
+  );
+}
+
+export function getPendingReply(id: string): PendingReply | null {
+  return (db.prepare(`SELECT * FROM pending_replies WHERE id = ?`).get(id) as PendingReply | undefined) ?? null;
+}
+
+/** Pending (unresolved) replies, newest first. */
+export function listPendingReplies(): PendingReply[] {
+  return db.prepare(
+    `SELECT * FROM pending_replies WHERE status = 'pending' ORDER BY created_at DESC`,
+  ).all() as PendingReply[];
+}
+
+export function markPendingReplyResolved(id: string, status: 'sent' | 'skipped'): void {
+  db.prepare(
+    `UPDATE pending_replies SET status = ?, resolved_at = ? WHERE id = ?`,
+  ).run(status, new Date().toISOString(), id);
 }
 
 // ── Learning Events ──────────────────────────────────────────────

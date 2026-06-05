@@ -61,6 +61,7 @@ DO NOT use for routine bookings, standard outreach, follow-ups in cadence, or an
     severity: z.enum(['routine', 'urgent', 'critical']).default('urgent').describe('routine=can wait, urgent=ping now (default), critical=ping with pre-drafted action'),
     customer_channel: z.string().optional().describe('Which channel the customer used (e.g., "Quo SMS", "GBP review", "FB Marketplace", "Gmail", "Web chat").'),
     customer_id: z.string().optional().describe('Customer identifier (phone, email, or name).'),
+    draft_reply: z.string().optional().describe('For a CUSTOMER REPLY: the exact text to send to the customer on this channel if Blayke approves. Provide this whenever you are drafting a reply to a customer — it lets Blayke approve and the reply is delivered automatically on the original channel. Omit for non-reply escalations (pure decisions/questions).'),
   },
   async (args) => {
     const data = {
@@ -74,17 +75,55 @@ DO NOT use for routine bookings, standard outreach, follow-ups in cadence, or an
       severity: args.severity,
       customer_channel: args.customer_channel || null,
       customer_id: args.customer_id || null,
+      draft_reply: args.draft_reply || null,
       timestamp: new Date().toISOString(),
     };
 
     const filename = writeIpcFile(MESSAGES_DIR, data);
 
+    const replyNote = args.draft_reply
+      ? ' Your draft is queued; Blayke will reply approve/edit/skip on WhatsApp and it sends automatically.'
+      : '';
     return {
       content: [{
         type: 'text' as const,
-        text: `Escalation sent (${filename}, severity=${args.severity}). Now: tell the customer "Let me check on that and get right back to you." and STOP replying on the high-stakes question. Wait for Blayke's WhatsApp decision before acting.`,
+        text: `Escalation sent (${filename}, severity=${args.severity}).${replyNote} Now: tell the customer "Let me check on that and get right back to you." and STOP replying on the high-stakes question. Wait for Blayke's WhatsApp decision before acting.`,
       }],
     };
+  },
+);
+
+// resolve_reply — MAIN ONLY. Blayke approves/edits/skips a customer reply Andy drafted
+// (via escalate's draft_reply). On send/edit the reply is delivered to the customer's
+// original channel by the host. See pending_replies.json for the queue + ids.
+server.tool(
+  'resolve_reply',
+  `(Main channel only) Resolve a pending customer reply that Andy drafted and queued via escalate. The id is shown in the escalation message in this WhatsApp thread, formatted as *Draft reply [id]:*. Call this when Blayke approves, edits, or skips that draft.
+• action "send"  → deliver the original draft to the customer on their channel.
+• action "edit"  → deliver Blayke's edited text instead (pass it as "text").
+• action "skip"  → do not send anything; mark the draft handled.
+If Blayke just says "approve" with one pending draft, use that draft's id. If several are pending and it's ambiguous, ask which one.`,
+  {
+    id: z.string().describe('The pending reply id from the escalation message (the [id] shown with the draft).'),
+    action: z.enum(['send', 'edit', 'skip']).describe('send=deliver the draft, edit=deliver new text, skip=send nothing'),
+    text: z.string().optional().describe('Required when action="edit": the replacement reply text.'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return { content: [{ type: 'text' as const, text: 'resolve_reply is only available on the main channel.' }] };
+    }
+    if (args.action === 'edit' && !args.text) {
+      return { content: [{ type: 'text' as const, text: 'action="edit" requires the replacement text.' }] };
+    }
+    writeIpcFile(MESSAGES_DIR, {
+      type: 'reply_resolution',
+      id: args.id,
+      action: args.action,
+      text: args.text || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+    return { content: [{ type: 'text' as const, text: `Reply ${args.id} resolved (${args.action}). The host will deliver it on the customer's channel if approved.` }] };
   },
 );
 

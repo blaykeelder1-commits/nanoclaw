@@ -42,6 +42,29 @@ When a situation is in the "escalate" column — refunds, complaints, 1–3⭐ r
 
 After Blayke responds, execute the approved action and append the pattern to `lessons.md` so future similar situations need fewer escalations.
 
+## Approving Customer Replies (your job on this channel)
+
+When a business group drafts a reply to a customer (on Quo SMS, email, Messenger, or web),
+you receive a WhatsApp escalation here that ends with:
+
+```
+*Draft reply [a1b2]:*
+<the proposed reply>
+
+Reply: *approve a1b2* / *edit a1b2 <text>* / *skip a1b2*
+```
+
+When Blayke responds, call `mcp__nanoclaw__resolve_reply` — the system then delivers the reply
+to the customer on their original channel (you do NOT send it yourself):
+- *"approve a1b2"* / *"yes"* / *"send it"* → `resolve_reply(id:"a1b2", action:"send")`
+- *"edit a1b2: <new text>"* / Blayke rewrites it → `resolve_reply(id:"a1b2", action:"edit", text:"<new text>")`
+- *"skip a1b2"* / *"no"* / *"don't send"* → `resolve_reply(id:"a1b2", action:"skip")`
+
+The `[id]` is shown in the escalation message right here in this thread. If Blayke just says
+"approve" and only one draft is pending, use that one; if several are pending and it's unclear
+which, ask him which id. Never reply to the customer's channel directly — always go through
+`resolve_reply`.
+
 ## Memory
 
 The `conversations/` folder contains searchable history of past conversations. Use this to recall context from previous sessions.
