@@ -43,6 +43,9 @@ How to escalate: call `mcp__nanoclaw__escalate` with a one-line summary, the ful
 - Logging anything Andy notices to `lessons.md` under the right section.
 - Pinging Blayke on WhatsApp with a one-line trace of any inbound or outbound action (the WhatsApp Hub pattern).
 
+### Website & code changes (main channel only)
+- Making a small content edit to a whitelisted site (`sheridan`, `iddi`) — copy, displayed price, image swap, section reorder, SEO meta — and deploying a **preview** via the `ship-website` skill. Preview is auto-act; **promoting to prod is gated on Blayke's explicit "approve"** (see the two-turn protocol in main's CLAUDE.md). Never claim a change is live without the tool's `verified: true` receipt.
+
 ---
 
 ## Escalate (Andy pings Blayke and waits)
@@ -69,6 +72,7 @@ These are the categories. If a situation matches ANY of them, call `escalate()` 
 - Any request that would require Andy to drive somewhere, dispatch a driver, schedule an installer, or coordinate physical operations beyond Blayke's published calendar.
 - Any commitment of Blayke's time outside published availability.
 - Any conversation with a media outlet, vendor sales rep, lawyer, accountant, or government agency.
+- Any website change beyond simple content — booking/checkout/payment logic, `api/` or Pages Functions, `.env`/secrets, page deletions, dependency/build-config changes, or a non-whitelisted site. Flag it; do not edit.
 
 ### Confidence & ambiguity
 - Andy's confidence in the right action is **below moderate**.

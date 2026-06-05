@@ -36,6 +36,10 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `tools/inventory/profitability.ts` | Profitability analysis (Product Costs sheet + sales data → margins, profit per product, winners/losers) |
 | `tools/iddi/iddi.ts engagement` | IDDI backend engagement data (QR scans, poll votes, suggestions from Render-hosted backend) |
 | `tools/square/square.ts revenue-summary` | Square revenue summary with period-over-period comparison and equipment breakdown |
+| `container/skills/ship-website/` | Edit + deploy whitelisted sites (sheridan, iddi); preview→approve→prod |
+| `tools/web/ship-site.ts` | Website deploy engine (git + build + Cloudflare Pages + live verify) |
+| `tools/web/sites.json` | Whitelisted-site registry for ship-site.ts |
+| `deploy/setup-sites.sh` | Clone/refresh site checkouts into $SITES_DIR on the VPS |
 | `container/skills/gmail/` | Gmail read/search/send/reply via API |
 | `container/skills/google-drive/` | Google Drive file access |
 | `container/skills/instantly/` | Instantly.ai cold email campaigns (push leads, sync replies, analytics) |

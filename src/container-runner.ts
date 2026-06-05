@@ -257,6 +257,10 @@ const SECRETS_GOOGLE = [
   'GOOGLE_SPREADSHEET_ID',
   'GOOGLE_CALENDAR_ID',
   'GMAIL_USER_EMAIL',
+  // Google Business Profile (local SEO): account + per-business location resource ids for gbp.ts
+  'GBP_ACCOUNT_ID',
+  'GBP_LOCATION_ID_SNAK',
+  'GBP_LOCATION_ID_SHERIDAN',
 ] as const;
 
 // Email sending (SMTP + Gmail send)
@@ -287,6 +291,11 @@ const SECRETS_SOCIAL = [
   'FB_PAGE_ACCESS_TOKEN',
   'LINKEDIN_ACCESS_TOKEN',
   'LINKEDIN_PERSON_URN',
+  // Marketing asset source: Drive folder per business + public staging location for prepare-asset.ts
+  'DRIVE_ASSETS_FOLDER_ID_SNAK',
+  'DRIVE_ASSETS_FOLDER_ID_SHERIDAN',
+  'ASSET_PUBLIC_DIR',
+  'ASSET_PUBLIC_BASE_URL',
 ] as const;
 
 // Vending platforms (IDDI + HahaVending + Vendera). Grouped under `iddi` scope so any
@@ -334,6 +343,14 @@ const SECRETS_TIKTOK = [
   'TIKTOK_ACCESS_TOKEN',
 ] as const;
 
+// Website deploys (git push + Cloudflare Pages). Used by tools/web/ship-site.ts.
+// Main-only by default; grantable to a non-main group via the `deploy` scope.
+const SECRETS_DEPLOY = [
+  'GITHUB_TOKEN',
+  'CLOUDFLARE_API_TOKEN',
+  'CLOUDFLARE_ACCOUNT_ID',
+] as const;
+
 // All secret keys (main group gets everything)
 const ALL_SECRET_KEYS = [
   ...SECRETS_CORE,
@@ -347,6 +364,7 @@ const ALL_SECRET_KEYS = [
   ...SECRETS_ADS,
   ...SECRETS_SEO,
   ...SECRETS_TIKTOK,
+  ...SECRETS_DEPLOY,
 ] as const;
 
 // Non-main groups get core + google + square (enough for briefings, CRM, follow-ups)
@@ -366,6 +384,7 @@ const SCOPE_MAP: Record<string, readonly string[]> = {
   ads: SECRETS_ADS,
   seo: SECRETS_SEO,
   tiktok: SECRETS_TIKTOK,
+  deploy: SECRETS_DEPLOY,
 };
 
 /**

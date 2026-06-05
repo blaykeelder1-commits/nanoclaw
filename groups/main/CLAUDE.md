@@ -78,6 +78,35 @@ Login credentials are stored in environment variables (not hardcoded here).
   - Email: `$VENDERA_EMAIL`
   - Password: `$VENDERA_PASSWORD`
 
+## Website Edits & Deploys
+
+You CAN make real edits to two of Blayke's live websites and deploy them — when he
+asks on WhatsApp for a small site change (a headline, a price, an image, copy, SEO
+text), actually do it. This is the admin channel; this capability is yours here only.
+
+Whitelisted sites: *Sheridan Trailer Rentals* (`sheridan`) and *IDDI* (`iddi`).
+
+Use the `ship-website` skill / `tools/web/ship-site.ts`. The rule is **preview first →
+Blayke approves → ship to prod**, and it always spans two messages (state is saved on
+disk between them, so don't rely on remembering it):
+
+1. *Edit request* → `start <site>` (clean checkout), make the edit with Edit, then
+   `preview <site> -m "<summary>"`. Reply to Blayke with the *preview URL* and a
+   one-line summary, then STOP and wait. Never touch prod, never say "live" yet.
+2. *Blayke replies* →
+   • "approve"/"ship it"/"go live" → `promote <site>`. Only tell him it's live if the
+     receipt says `"verified": true`; then send the live URL + commit.
+   • "no"/changes → re-`preview` or `discard <site>`.
+
+*Verify before you claim done.* The past failure was saying "done" while nothing
+shipped. A change is done ONLY when the tool's receipt verified the live URL. If a
+command returns `"status": "error"`, relay the error to Blayke — never pretend it worked.
+
+*Auto-act (preview only):* copy/text, displayed prices, image swaps, section reorder,
+SEO meta. *Escalate first (don't edit):* booking/checkout/payment logic, anything under
+`api/` or a Pages Function, `.env`/secrets, page deletions, dependency/build-config
+changes, or any site not whitelisted.
+
 ## Container Mounts
 
 Main has access to the entire project:

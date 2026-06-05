@@ -1,0 +1,22 @@
+{
+  "sheridan": {
+    "label": "Sheridan Trailer Rentals",
+    "owner": "blaykeelder1-commits",
+    "repo": "sheridan-site",
+    "prodBranch": "main",
+    "build": "npm ci && npm run build",
+    "deployDir": ".",
+    "cfProject": "sheridan-site",
+    "liveUrl": "https://sheridantrailerrentals.us"
+  },
+  "iddi": {
+    "label": "IDDI (vending front-end)",
+    "owner": "blaykeelder1-commits",
+    "repo": "vending-front-end-",
+    "prodBranch": "main",
+    "build": "npm ci && npm run build",
+    "deployDir": "build",
+    "cfProject": "vending-front-end",
+    "liveUrl": "https://iddisolutions.net"
+  }
+}

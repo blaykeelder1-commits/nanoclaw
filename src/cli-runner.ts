@@ -139,6 +139,10 @@ const SECRETS_GOOGLE = [
   'GOOGLE_SPREADSHEET_ID',
   'GOOGLE_CALENDAR_ID',
   'GMAIL_USER_EMAIL',
+  // Google Business Profile (local SEO): account + per-business location resource ids for gbp.ts
+  'GBP_ACCOUNT_ID',
+  'GBP_LOCATION_ID_SNAK',
+  'GBP_LOCATION_ID_SHERIDAN',
 ] as const;
 const SECRETS_EMAIL = [
   'SMTP_HOST',
@@ -163,6 +167,11 @@ const SECRETS_SOCIAL = [
   'FB_PAGE_ACCESS_TOKEN',
   'LINKEDIN_ACCESS_TOKEN',
   'LINKEDIN_PERSON_URN',
+  // Marketing asset source: Drive folder per business + public staging location for prepare-asset.ts
+  'DRIVE_ASSETS_FOLDER_ID_SNAK',
+  'DRIVE_ASSETS_FOLDER_ID_SHERIDAN',
+  'ASSET_PUBLIC_DIR',
+  'ASSET_PUBLIC_BASE_URL',
 ] as const;
 const SECRETS_IDDI = [
   'IDDI_BASE_URL',
@@ -175,6 +184,12 @@ const SECRETS_IDDI = [
   'VENDERA_PASSWORD',
 ] as const;
 const SECRETS_LEADS = ['GOOGLE_MAPS_API_KEY', 'INSTANTLY_API_KEY'] as const;
+// Website deploys (git push + Cloudflare Pages). Used by tools/web/ship-site.ts.
+const SECRETS_DEPLOY = [
+  'GITHUB_TOKEN',
+  'CLOUDFLARE_API_TOKEN',
+  'CLOUDFLARE_ACCOUNT_ID',
+] as const;
 
 const ALL_SECRET_KEYS = [
   ...SECRETS_CORE,
@@ -184,6 +199,7 @@ const ALL_SECRET_KEYS = [
   ...SECRETS_LEADS,
   ...SECRETS_IDDI,
   ...SECRETS_SQUARE,
+  ...SECRETS_DEPLOY,
 ] as const;
 
 const STANDARD_SECRET_KEYS = [
@@ -197,6 +213,7 @@ const SCOPE_MAP: Record<string, readonly string[]> = {
   social: SECRETS_SOCIAL,
   iddi: SECRETS_IDDI,
   leads: SECRETS_LEADS,
+  deploy: SECRETS_DEPLOY,
 };
 
 function readSecrets(
