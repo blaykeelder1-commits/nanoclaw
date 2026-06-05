@@ -43,7 +43,7 @@ node -e '
   const s = require("'"$SITES_JSON"'");
   for (const k of Object.keys(s)) {
     const v = s[k];
-    console.log([k, v.owner, v.repo, v.prodBranch].join("\t"));
+    console.log([k, v.owner, v.repo, v.gitBranch].join("\t"));
   }
 ' | while IFS=$'\t' read -r key owner repo branch; do
   dir="$SITES_DIR/$repo"

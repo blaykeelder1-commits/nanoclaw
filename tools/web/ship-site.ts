@@ -43,7 +43,8 @@ interface Site {
   label: string;
   owner: string;
   repo: string;
-  prodBranch: string;
+  gitBranch: string; // branch to checkout/commit/push in git
+  cfBranch: string;  // Cloudflare Pages production branch (wrangler --branch)
   build: string;
   deployDir: string;
   cfProject: string;
@@ -172,12 +173,12 @@ function ensureCleanCheckout(site: Site): string {
   const remote = authedRemote(site);
   if (!fs.existsSync(path.join(dir, '.git'))) {
     fs.mkdirSync(SITES_DIR, { recursive: true });
-    run('git', ['clone', '--branch', site.prodBranch, remote, dir]);
+    run('git', ['clone', '--branch', site.gitBranch, remote, dir]);
   } else {
     run('git', ['remote', 'set-url', 'origin', remote], dir);
-    run('git', ['fetch', 'origin', site.prodBranch], dir);
-    run('git', ['checkout', site.prodBranch], dir);
-    run('git', ['reset', '--hard', `origin/${site.prodBranch}`], dir);
+    run('git', ['fetch', 'origin', site.gitBranch], dir);
+    run('git', ['checkout', site.gitBranch], dir);
+    run('git', ['reset', '--hard', `origin/${site.gitBranch}`], dir);
     run('git', ['clean', '-fd'], dir);
   }
   return dir;
@@ -282,7 +283,8 @@ function cmdStart(name: string): void {
     site: name,
     label: site.label,
     path: dir,
-    prodBranch: site.prodBranch,
+    gitBranch: site.gitBranch,
+    cfBranch: site.cfBranch,
     instructions: `Edit files under ${dir} with Read/Edit, then run: preview ${name} -m "<summary>"`,
   });
 }
@@ -313,7 +315,7 @@ function cmdPreview(name: string, message: string): void {
   const previewUrl = wranglerDeploy(site, uploadDir, branch);
 
   // Leave the preview branch in place for promote; return to a clean prod branch.
-  run('git', ['checkout', site.prodBranch], dir);
+  run('git', ['checkout', site.gitBranch], dir);
 
   writePending({
     site: name, branch, sha, message, previewUrl, files,
@@ -342,21 +344,21 @@ async function cmdPromote(name: string): Promise<void> {
 
   // Sync prod branch, then fast-forward it to the previewed commit.
   run('git', ['remote', 'set-url', 'origin', remote], dir);
-  run('git', ['fetch', 'origin', site.prodBranch], dir);
-  run('git', ['checkout', site.prodBranch], dir);
-  run('git', ['reset', '--hard', `origin/${site.prodBranch}`], dir);
+  run('git', ['fetch', 'origin', site.gitBranch], dir);
+  run('git', ['checkout', site.gitBranch], dir);
+  run('git', ['reset', '--hard', `origin/${site.gitBranch}`], dir);
   try {
     run('git', ['merge', '--ff-only', pending.sha], dir);
   } catch {
     throw new ShipError(
-      `${site.prodBranch} moved on since preview — cannot fast-forward. Re-run start + preview to rebase on the latest.`,
+      `${site.gitBranch} moved on since preview — cannot fast-forward. Re-run start + preview to rebase on the latest.`,
     );
   }
-  run('git', ['push', 'origin', site.prodBranch], dir);
+  run('git', ['push', 'origin', site.gitBranch], dir);
 
   runShell(site.build, dir);
   const uploadDir = resolveUploadDir(site, dir);
-  wranglerDeploy(site, uploadDir, site.prodBranch);
+  wranglerDeploy(site, uploadDir, site.cfBranch);
 
   const httpStatus = await verifyLive(site.liveUrl);
   const verified = httpStatus >= 200 && httpStatus < 400;
@@ -386,8 +388,8 @@ function cmdDiscard(name: string): void {
   const pending = readPending(name);
   const dir = checkoutPath(site);
   if (fs.existsSync(path.join(dir, '.git'))) {
-    run('git', ['checkout', site.prodBranch], dir);
-    run('git', ['reset', '--hard', `origin/${site.prodBranch}`], dir);
+    run('git', ['checkout', site.gitBranch], dir);
+    run('git', ['reset', '--hard', `origin/${site.gitBranch}`], dir);
     run('git', ['clean', '-fd'], dir);
     if (pending?.branch) {
       try { run('git', ['branch', '-D', pending.branch], dir); } catch { /* ignore */ }
