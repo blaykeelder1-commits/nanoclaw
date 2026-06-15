@@ -18,6 +18,7 @@ import fs from 'fs';
 import path from 'path';
 import { readEnvFile } from './env.js';
 import { EQUIPMENT, calculatePrice } from './pricing.js';
+import { quoteDelivery, STANDARD_DELIVERY_FEE } from './geocode.js';
 import { getBookedSlots, datesAreAvailable, createBookingEvent, deleteCalendarEvent } from './calendar.js';
 import { createPaymentLink, checkOrderPayment, refundPayment } from './square.js';
 import {
@@ -112,6 +113,7 @@ const envKeys = [
   'QUO_API_KEY', 'QUO_SHERIDAN_PHONE_ID', 'QUO_SHERIDAN_NUMBER',
   'BOOKING_PUBLIC_BASE_URL',
   'AGENT_API_TOKEN',
+  'GOOGLE_MAPS_API_KEY',
 ];
 
 function loadEnv(): void {
@@ -189,6 +191,30 @@ setInterval(() => {
 }, 300_000);
 
 // ── Handlers ────────────────────────────────────────────────────────
+
+// Live delivery-fee quote for the booking form. Returns the distance-tiered
+// drop-off fee for an address, or out-of-range / unknown. Read-only, no side effects.
+async function handleDeliveryQuote(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  let body: { address?: string };
+  try {
+    body = JSON.parse(await readBody(req));
+  } catch {
+    json(res, 400, { error: 'Invalid JSON' });
+    return;
+  }
+  const address = (body.address || '').trim();
+  if (!address) {
+    json(res, 400, { error: 'address required' });
+    return;
+  }
+  const quote = await quoteDelivery(address);
+  json(res, 200, {
+    status: quote.status,
+    miles: quote.miles ?? null,
+    fee: quote.fee,
+    inRange: quote.status !== 'out_of_range',
+  });
+}
 
 async function handleAvailability(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   let body: AvailabilityRequest;
@@ -319,17 +345,17 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
     return;
   }
 
-  // Calculate pricing (pass dates for same-week detection on RV)
-  // Only allow deposit mode when frontend explicitly sends 'deposit'
   const rawMode = body.paymentMode;
   const paymentMode: 'full' | 'deposit' | undefined = rawMode === 'deposit' ? 'deposit' : 'full';
   const promoCode = body.promoCode;
-  const pricing = calculatePrice(equipmentKey, numDays, body.addOns || [], { dates, paymentMode, promoCode });
 
-  // RV is always delivery-only — there is no self-service pickup option.
+  // Only the RV camper has an address — the delivery destination. Delivery is
+  // mandatory (no self-service pickup), so the address is required and must not
+  // be bypassable. Car hauler / utility are picked up at the Tomball lot.
   const deliveryAddress = (body.deliveryAddress || '').trim();
+  let deliveryFee: number | undefined;
   if (equipmentKey === 'rv') {
-    if (!pricing.addOns.includes('delivery')) {
+    if (!(body.addOns || []).includes('delivery')) {
       json(res, 400, { error: 'Delivery is required for RV rentals.' });
       return;
     }
@@ -341,6 +367,28 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
       json(res, 400, { error: 'Delivery address is too long (max 500 characters).' });
       return;
     }
+    // Resolve the distance-tiered drop-off fee. Out-of-area (>150mi) is rejected;
+    // an unresolvable address degrades to the standard fee so a geocoding outage
+    // never blocks a booking.
+    const quote = await quoteDelivery(deliveryAddress);
+    if (quote.status === 'out_of_range') {
+      json(res, 400, { error: `That address is about ${quote.miles} miles away — outside our 150-mile delivery area. Please call (817) 587-1460.` });
+      return;
+    }
+    deliveryFee = quote.fee ?? STANDARD_DELIVERY_FEE;
+  }
+
+  // Calculate pricing (pass dates for same-week detection on RV; deliveryFee is
+  // the resolved distance tier for RV deliveries).
+  const pricing = calculatePrice(equipmentKey, numDays, body.addOns || [], { dates, paymentMode, promoCode, deliveryFee });
+
+  // Car hauler / utility are picked up at the lot during business hours
+  // (8 AM–8 PM). The chosen pickup time is also the drop-off due time.
+  const PICKUP_SLOTS = ['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00','19:00','20:00'];
+  const pickupTime = (body.timeSlot || '').trim();
+  if (equipmentKey !== 'rv' && !PICKUP_SLOTS.includes(pickupTime)) {
+    json(res, 400, { error: 'Please choose a pickup time between 8:00 AM and 8:00 PM.' });
+    return;
   }
 
   // License photo is mandatory — must exist on disk under the session before
@@ -400,6 +448,7 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
     squarePaymentLinkId: paymentResult.paymentLinkId,
     paymentUrl: paymentResult.paymentUrl,
     deliveryAddress,
+    pickupTime,
   });
 
   // Bind the pre-signed agreement to the new booking. This consumes the
@@ -1144,6 +1193,8 @@ function handleGetBooking(res: http.ServerResponse, bookingId: string): void {
     balance: booking.balance,
     status: booking.status,
     addOns: booking.addOns,
+    deliveryAddress: booking.deliveryAddress || '',
+    pickupTime: booking.pickupTime || '',
     customer: {
       firstName: booking.customer.firstName,
       lastName: booking.customer.lastName,
@@ -1748,6 +1799,12 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     // POST /api/availability
     if (req.method === 'POST' && url === '/api/availability') {
       await handleAvailability(req, res);
+      return;
+    }
+
+    // POST /api/delivery-quote — live distance-tiered drop-off fee for the form.
+    if (req.method === 'POST' && url === '/api/delivery-quote') {
+      await handleDeliveryQuote(req, res);
       return;
     }
 

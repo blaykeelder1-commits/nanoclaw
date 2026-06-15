@@ -93,6 +93,8 @@ function createSchema(): void {
     // We snapshot the pricing result JSON so the later agent-payment-link mint can hand
     // the same numbers to Square without re-validating dates or promo codes.
     `ALTER TABLE bookings ADD COLUMN pricing_snapshot TEXT NOT NULL DEFAULT ''`,
+    // Pickup time slot for car hauler / utility (also the drop-off due time). Empty for RV.
+    `ALTER TABLE bookings ADD COLUMN pickup_time TEXT NOT NULL DEFAULT ''`,
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }
@@ -139,6 +141,7 @@ export function createBooking(params: {
   squarePaymentLinkId: string;
   paymentUrl: string;
   deliveryAddress?: string;
+  pickupTime?: string;
   agentInitiated?: boolean;
 }): Booking {
   const now = new Date().toISOString();
@@ -149,13 +152,13 @@ export function createBooking(params: {
       customer_first, customer_last, customer_email, customer_phone,
       subtotal, deposit, balance, add_ons, details, status,
       square_order_id, square_payment_link_id, payment_url,
-      calendar_event_id, delivery_address, agent_initiated, created_at, updated_at
+      calendar_event_id, delivery_address, pickup_time, agent_initiated, created_at, updated_at
     ) VALUES (
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?, ?, ?, ?, ?, 'pending',
       ?, ?, ?,
-      '', ?, ?, ?, ?
+      '', ?, ?, ?, ?, ?
     )
   `).run(
     params.id, params.equipment, params.equipmentLabel,
@@ -166,6 +169,7 @@ export function createBooking(params: {
     JSON.stringify(params.addOns), params.details,
     params.squareOrderId, params.squarePaymentLinkId, params.paymentUrl,
     params.deliveryAddress || '',
+    params.pickupTime || '',
     params.agentInitiated ? 1 : 0,
     now, now,
   );
@@ -474,6 +478,7 @@ function rowToBooking(row: any): Booking {
     followupSentAt: row.followup_sent_at || null,
     licenseFileId: row.license_photo || '',
     deliveryAddress: row.delivery_address || '',
+    pickupTime: row.pickup_time || '',
     agentInitiated: !!row.agent_initiated,
     licenseSmsSentAt: row.license_sms_sent_at || '',
     agreementId: row.agreement_id || '',

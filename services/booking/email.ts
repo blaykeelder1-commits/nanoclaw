@@ -13,6 +13,25 @@ function unitLabel(booking: Booking): string {
   return `${booking.numDays} ${unit}${booking.numDays > 1 ? 's' : ''}`;
 }
 
+/** 'HH:MM' (24h) -> '9:00 AM'. Empty string in/out. */
+function fmtTime12(hhmm: string): string {
+  if (!hhmm) return '';
+  const [hStr, mStr] = hhmm.split(':');
+  const h = parseInt(hStr, 10);
+  if (Number.isNaN(h)) return hhmm;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${mStr || '00'} ${ampm}`;
+}
+
+/** 'YYYY-MM-DD' -> 'Jul 31, 2026'. Falls back to the input if malformed. */
+function prettyDate(dateStr: string): string {
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const p = (dateStr || '').split('-');
+  if (p.length !== 3) return dateStr || '';
+  return `${months[parseInt(p[1], 10) - 1]} ${parseInt(p[2], 10)}, ${p[0]}`;
+}
+
 let transporter: Transporter | null = null;
 
 function getTransporter(): Transporter {
@@ -117,6 +136,8 @@ export async function sendOwnerNotification(booking: Booking): Promise<void> {
             <tr><td style="padding: 2px 12px 2px 0; font-weight: 600;">Dates:</td><td>${dateRange}</td></tr>
             <tr><td style="padding: 2px 12px 2px 0; font-weight: 600;">Duration:</td><td>${unitLabel(booking)}</td></tr>
             ${booking.addOns.length > 0 ? `<tr><td style="padding: 2px 12px 2px 0; font-weight: 600;">Add-ons:</td><td>${booking.addOns.join(', ')}</td></tr>` : ''}
+            ${booking.deliveryAddress ? `<tr><td style="padding: 2px 12px 2px 0; font-weight: 600;">Delivery to:</td><td>${escapeHtml(booking.deliveryAddress)}</td></tr>` : ''}
+            ${booking.pickupTime ? `<tr><td style="padding: 2px 12px 2px 0; font-weight: 600;">Pickup time:</td><td>${fmtTime12(booking.pickupTime)} (due back same time on drop-off)</td></tr>` : ''}
             ${booking.details ? `<tr><td style="padding: 2px 12px 2px 0; font-weight: 600;">Notes:</td><td>${escapeHtml(booking.details)}</td></tr>` : ''}
           </table>
 
@@ -161,13 +182,16 @@ export async function sendCustomerConfirmation(booking: Booking): Promise<void> 
     ? `<tr><td style="padding: 4px 0; font-weight: 600; color: #d97706;">Balance Due:</td><td style="color: #d97706;">$${booking.balance.toFixed(2)} (due before pickup)</td></tr>`
     : '';
 
+  const locLine = booking.deliveryAddress
+    ? `<li>See your delivery address above — we'll bring it to you</li>`
+    : `<li>See your pickup location${booking.pickupTime ? ' and time' : ''} above</li>`;
   const nextSteps = isDepositOnly
     ? `<li>We'll send a payment link for the remaining $${booking.balance.toFixed(2)} before your pickup date</li>
             <li>Lock code sent after full payment is received</li>
-            <li>Pickup location: Tomball, TX area</li>
+            ${locLine}
             <li>Questions? Just reply to this email or text us</li>`
     : `<li>You'll receive the lock code to access the trailer shortly</li>
-            <li>Pickup location: Tomball, TX area</li>
+            ${locLine}
             <li>Questions? Just reply to this email or text us</li>`;
 
   await sendWithRetry(t, {
@@ -198,11 +222,17 @@ export async function sendCustomerConfirmation(booking: Booking): Promise<void> 
             </table>
           </div>
 
+          ${booking.deliveryAddress ? `
           <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 16px; margin: 16px 0;">
-            <h3 style="margin: 0 0 8px; color: #1d4ed8; font-size: 15px;">📍 Pickup / Return Location</h3>
+            <h3 style="margin: 0 0 8px; color: #1d4ed8; font-size: 15px;">🚚 Delivery Address</h3>
+            <p style="margin: 0; font-size: 14px; color: #374151; font-weight: 600;">${escapeHtml(booking.deliveryAddress)}</p>
+            <p style="margin: 8px 0 0; font-size: 13px; color: #6b7280;">We'll deliver your camper here. Exact drop-off details and the lock code are sent before your date.</p>
+          </div>` : `
+          <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 16px; margin: 16px 0;">
+            <h3 style="margin: 0 0 8px; color: #1d4ed8; font-size: 15px;">📍 Pickup &amp; Return Location</h3>
             <p style="margin: 0; font-size: 14px; color: #374151; font-weight: 600;">14235 Alice Road, Tomball, TX 77377</p>
-            ${booking.deliveryAddress ? `<p style="margin: 8px 0 0; font-size: 13px; color: #6b7280;"><strong>Delivery to:</strong> ${escapeHtml(booking.deliveryAddress)}</p>` : ''}
-          </div>
+            ${booking.pickupTime ? `<p style="margin: 8px 0 0; font-size: 13px; color: #374151;"><strong>Pickup time:</strong> ${fmtTime12(booking.pickupTime)} — return by ${fmtTime12(booking.pickupTime)} on ${prettyDate(booking.dates[booking.dates.length - 1])}</p>` : ''}
+          </div>`}
 
           <h3 style="color: #374151; margin: 20px 0 8px;">Next Steps</h3>
           <ol style="font-size: 14px; color: #4b5563; line-height: 1.8; padding-left: 20px;">

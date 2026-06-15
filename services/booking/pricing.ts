@@ -41,27 +41,27 @@ export const ADD_ONS: Record<string, AddOn> = {
   freshwater: {
     key: 'freshwater',
     label: 'Fresh Water Tank Refill',
-    rate: 25,
+    rate: 75,
     unit: 'flat',
     appliesTo: ['rv'],
   },
   wastetank: {
     key: 'wastetank',
     label: 'Waste Tank Drop',
-    rate: 35,
+    rate: 75,
     unit: 'flat',
     appliesTo: ['rv'],
   },
   gastank: {
     key: 'gastank',
-    label: '30-Gal Fuel Tank (Generator)',
+    label: '34-Gal Gas Tank (Generator)',
     rate: 150,
     unit: 'flat',
     appliesTo: ['rv'],
   },
   delivery: {
     key: 'delivery',
-    label: 'Delivery (within 60mi of Tomball)',
+    label: 'Delivery & Pickup',
     rate: 250,
     unit: 'flat',
     appliesTo: ['rv'],
@@ -247,7 +247,7 @@ export function calculatePrice(
   equipmentKey: EquipmentKey,
   numDays: number,
   addOnKeys: string[] = [],
-  opts?: { dates?: string[]; paymentMode?: PaymentMode; promoCode?: string },
+  opts?: { dates?: string[]; paymentMode?: PaymentMode; promoCode?: string; deliveryFee?: number },
 ): PriceBreakdown {
   const equipment = EQUIPMENT[equipmentKey];
   if (!equipment) throw new Error(`Unknown equipment: ${equipmentKey}`);
@@ -319,21 +319,35 @@ export function calculatePrice(
     if (!addOn) continue;
     if (!addOn.appliesTo.includes(equipmentKey)) continue;
 
+    // Mid-stay tank services (fresh-water refill, waste-tank drop) are only
+    // offered for RV stays of 2 or more nights — a single overnight runs off the
+    // tank it ships with. Drop them otherwise so a crafted request can't be
+    // charged off-policy.
+    if ((key === 'freshwater' || key === 'wastetank') && !(equipmentKey === 'rv' && numDays >= 2)) {
+      continue;
+    }
+
     validAddOns.push(key);
+
+    // Delivery fee scales with distance — the server passes the resolved tier
+    // fee via opts.deliveryFee, overriding the flat default.
+    const rate = (key === 'delivery' && typeof opts?.deliveryFee === 'number')
+      ? opts.deliveryFee
+      : addOn.rate;
 
     if (addOn.unit === 'flat') {
       lineItems.push({
         name: addOn.label,
         quantity: 1,
-        unitPrice: addOn.rate,
-        total: addOn.rate,
+        unitPrice: rate,
+        total: rate,
       });
     } else {
       lineItems.push({
         name: `${addOn.label} — ${numDays} ${addOn.unit}${numDays > 1 ? 's' : ''}`,
         quantity: numDays,
-        unitPrice: addOn.rate,
-        total: addOn.rate * numDays,
+        unitPrice: rate,
+        total: rate * numDays,
       });
     }
   }

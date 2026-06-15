@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { calculatePrice, buildSquareLineItems, EQUIPMENT } from './pricing.js';
+import { feeForMiles } from './geocode.js';
 
 // ── Helper: generate dates relative to today ─────────────────────────
 
@@ -46,6 +47,45 @@ describe('calculatePrice — basic', () => {
   it('ignores unknown add-on keys', () => {
     const result = calculatePrice('rv', 1, ['nonexistent']);
     expect(result.addOns).toEqual([]);
+  });
+
+  it('prices fresh-water fill and waste-tank drop at $75 each (flat)', () => {
+    const result = calculatePrice('rv', 3, ['freshwater', 'wastetank']);
+    // Base: 150*3 = 450, freshwater: 75 flat, wastetank: 75 flat
+    expect(result.subtotal).toBe(450 + 75 + 75);
+    expect(result.addOns).toEqual(['freshwater', 'wastetank']);
+  });
+
+  it('drops tank services for a single-night RV stay', () => {
+    const result = calculatePrice('rv', 1, ['freshwater', 'wastetank']);
+    // Mid-stay tank services only apply to stays of 2+ nights.
+    expect(result.addOns).toEqual([]);
+    expect(result.subtotal).toBe(150 * 1);
+  });
+
+  it('includes tank services for a 2-night RV stay', () => {
+    const result = calculatePrice('rv', 2, ['freshwater', 'wastetank']);
+    expect(result.addOns).toEqual(['freshwater', 'wastetank']);
+    expect(result.subtotal).toBe(150 * 2 + 75 + 75);
+  });
+
+  it('maps delivery distance to the right tier fee', () => {
+    expect(feeForMiles(0)).toBe(250);
+    expect(feeForMiles(60)).toBe(250);
+    expect(feeForMiles(61)).toBe(300);
+    expect(feeForMiles(90)).toBe(300);
+    expect(feeForMiles(91)).toBe(340);
+    expect(feeForMiles(120)).toBe(340);
+    expect(feeForMiles(121)).toBe(375);
+    expect(feeForMiles(150)).toBe(375);
+    expect(feeForMiles(151)).toBeNull();
+  });
+
+  it('calculatePrice honors a delivery-fee override (distance tier)', () => {
+    const r = calculatePrice('rv', 3, ['delivery'], { deliveryFee: 375 });
+    const deliveryLine = r.lineItems.find((li) => li.name.includes('Delivery'));
+    expect(deliveryLine?.total).toBe(375);
+    expect(r.subtotal).toBe(150 * 3 + 375);
   });
 
   it('throws on unknown equipment', () => {

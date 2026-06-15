@@ -104,6 +104,8 @@ export interface Booking {
   licenseFileId: string;
   /** Destination address for the camper (empty string if pickup via RIVER promo). */
   deliveryAddress: string;
+  /** Pickup time slot 'HH:MM' (24h) for car hauler / utility pickups; also the drop-off due time. Empty for RV (delivered). */
+  pickupTime: string;
   /** True when Andy created the booking from a chat conversation (license deferred to post-payment SMS). */
   agentInitiated: boolean;
   /** Timestamp the post-payment license-upload SMS went out, or '' if never sent. */
