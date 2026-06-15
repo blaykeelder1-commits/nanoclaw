@@ -109,12 +109,14 @@ export async function quoteDelivery(address: string): Promise<DeliveryQuote> {
     if (!originCache || !dest) {
       return { status: 'unknown', fee: STANDARD_DELIVERY_FEE };
     }
-    const miles = haversineMiles(originCache, dest);
+    // Round first, then tier — so the mileage the customer sees is exactly what
+    // determines their fee (no "90 mi but charged the 91-120 rate" mismatch).
+    const miles = Math.round(haversineMiles(originCache, dest));
     const fee = feeForMiles(miles);
     if (fee === null) {
-      return { status: 'out_of_range', miles: Math.round(miles), fee: null };
+      return { status: 'out_of_range', miles, fee: null };
     }
-    return { status: 'ok', miles: Math.round(miles), fee };
+    return { status: 'ok', miles, fee };
   } catch (err: any) {
     console.error('[geocode] quoteDelivery failed:', err?.message || err);
     return { status: 'unknown', fee: STANDARD_DELIVERY_FEE };
