@@ -25,7 +25,7 @@ describe('calculatePrice — basic', () => {
 
   it('calculates carhauler price for 2 days', () => {
     const result = calculatePrice('carhauler', 2);
-    expect(result.subtotal).toBe(65 * 2);
+    expect(result.subtotal).toBe(69 * 2);
     expect(result.deposit).toBe(50);
   });
 
@@ -41,7 +41,7 @@ describe('calculatePrice — basic', () => {
     // Generator only applies to RV
     const result = calculatePrice('carhauler', 2, ['generator']);
     expect(result.addOns).toEqual([]);
-    expect(result.subtotal).toBe(65 * 2);
+    expect(result.subtotal).toBe(69 * 2);
   });
 
   it('ignores unknown add-on keys', () => {
@@ -221,7 +221,10 @@ describe('buildSquareLineItems — deposit mode', () => {
   });
 
   it('deposit line item includes the balance amount in the name', () => {
-    const dates = [daysFromNow(14), daysFromNow(15), daysFromNow(16)];
+    // Fixed far-future non-holiday dates: keeps it in advance/deposit mode and
+    // deterministic (relative dates here previously drifted onto the July 4
+    // holiday window and broke the hardcoded balance).
+    const dates = ['2035-03-10', '2035-03-11', '2035-03-12'];
     const pricing = calculatePrice('rv', 3, [], { dates });
     const items = buildSquareLineItems(pricing).lineItems;
     // Balance = subtotal = 150*3 = 450
@@ -263,7 +266,7 @@ describe('Integration — booking flow', () => {
     const pricing = calculatePrice('carhauler', 2, [], { dates });
 
     expect(pricing.paymentMode).toBe('full');
-    expect(pricing.chargeNow).toBe(pricing.subtotal + pricing.deposit); // $130 + $50
+    expect(pricing.chargeNow).toBe(pricing.subtotal + pricing.deposit); // $138 + $50
     expect(pricing.balance).toBe(0);
 
     const items = buildSquareLineItems(pricing).lineItems;
@@ -323,7 +326,7 @@ describe('calculatePrice — RV holiday pricing', () => {
   it('does not apply holiday pricing to carhauler', () => {
     const dates = ['2035-07-04', '2035-07-05'];
     const pricing = calculatePrice('carhauler', 2, [], { dates });
-    expect(pricing.subtotal).toBe(65 * 2);
+    expect(pricing.subtotal).toBe(69 * 2);
   });
 });
 
@@ -348,7 +351,7 @@ describe('calculatePrice — RIVER promo (10% off)', () => {
   it('applies to the car hauler', () => {
     const dates = ['2035-03-10', '2035-03-11'];
     const pricing = calculatePrice('carhauler', 2, [], { dates, promoCode: 'RIVER' });
-    const gross = 65 * 2;
+    const gross = 69 * 2;
     expect(pricing.subtotal).toBe(gross * 0.9);
     expect(pricing.deposit).toBe(50);
     expect(pricing.discount?.amount).toBe(gross * 0.1);
@@ -356,7 +359,7 @@ describe('calculatePrice — RIVER promo (10% off)', () => {
 
   it('is case-insensitive', () => {
     const pricing = calculatePrice('carhauler', 1, [], { dates: ['2035-03-10'], promoCode: 'river' });
-    expect(pricing.subtotal).toBe(65 * 0.9);
+    expect(pricing.subtotal).toBe(69 * 0.9);
   });
 
   it('does NOT apply to the landscaping/utility trailer', () => {
@@ -383,7 +386,54 @@ describe('calculatePrice — RIVER promo (10% off)', () => {
     const { lineItems, discounts } = buildSquareLineItems(pricing);
     expect(discounts).toHaveLength(1);
     expect(discounts[0].scope).toBe('ORDER');
-    expect(discounts[0].amount_money.amount).toBe(Math.round(65 * 2 * 0.1 * 100)); // cents
+    expect(discounts[0].amount_money.amount).toBe(Math.round(69 * 2 * 0.1 * 100)); // cents
     expect(lineItems.every((li) => li.base_price_money.amount >= 0)).toBe(true);
+  });
+});
+
+// ── Automatic longer-rental discount ─────────────────────────────────
+
+describe('calculatePrice — longer-rental discount', () => {
+  it('car hauler under 3 days gets no discount', () => {
+    const pricing = calculatePrice('carhauler', 2);
+    expect(pricing.subtotal).toBe(69 * 2);
+    expect(pricing.discount).toBeUndefined();
+  });
+
+  it('car hauler 3–6 days gets 10% off (3+ day discount)', () => {
+    const pricing = calculatePrice('carhauler', 3);
+    expect(pricing.subtotal).toBeCloseTo(69 * 3 * 0.9, 2);
+    expect(pricing.discount?.label).toContain('3+ day discount');
+    expect(pricing.discount?.amount).toBeCloseTo(69 * 3 * 0.1, 2);
+  });
+
+  it('car hauler 7+ days gets 18% off (weekly rate)', () => {
+    const pricing = calculatePrice('carhauler', 7);
+    expect(pricing.subtotal).toBeCloseTo(69 * 7 * 0.82, 2);
+    expect(pricing.discount?.label).toContain('Weekly rate');
+    expect(pricing.discount?.amount).toBeCloseTo(69 * 7 * 0.18, 2);
+  });
+
+  it('utility/landscaping trailer 7+ days gets the 18% weekly rate', () => {
+    const pricing = calculatePrice('landscaping', 7);
+    expect(pricing.subtotal).toBeCloseTo(50 * 7 * 0.82, 2);
+    expect(pricing.discount?.label).toContain('Weekly rate');
+  });
+
+  it('RV gets a smaller 10% break at 7+ nights, nothing below', () => {
+    expect(calculatePrice('rv', 6).discount).toBeUndefined();
+    const week = calculatePrice('rv', 7);
+    expect(week.subtotal).toBeCloseTo(150 * 7 * 0.9, 2);
+    expect(week.discount?.amount).toBeCloseTo(150 * 7 * 0.1, 2);
+  });
+
+  it('takes the BETTER of promo vs duration and never stacks them', () => {
+    // 7-day car hauler + RIVER(10%): weekly 18% wins, applied once.
+    const pricing = calculatePrice('carhauler', 7, [], {
+      dates: ['2035-03-10', '2035-03-11', '2035-03-12', '2035-03-13', '2035-03-14', '2035-03-15', '2035-03-16'],
+      promoCode: 'RIVER',
+    });
+    expect(pricing.subtotal).toBeCloseTo(69 * 7 * 0.82, 2);
+    expect(pricing.discount?.label).toContain('Weekly rate');
   });
 });
