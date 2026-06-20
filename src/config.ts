@@ -46,6 +46,25 @@ export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 export const MAIN_GROUP_FOLDER = 'main';
 
+// Owner-facing notification channels (Blayke's command/ops groups) are exempt
+// from the per-JID outbound rate cap — that cap exists to throttle CUSTOMER
+// channels, not to silence the owner's own ops feeds. Without this, a chatty
+// cron (e.g. the SGS sweeps every 5/20/30 min) blows the 80/day cap by midday
+// and the limiter then drops every real notification ("ready to review",
+// escalations) to that group. `main` was already exempt; the rest are too.
+export const RATE_LIMIT_EXEMPT_FOLDERS = (
+  process.env.RATE_LIMIT_EXEMPT_FOLDERS ||
+  'main,sgs,sheridan-rentals,snak-group'
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+// A scheduled task emits EXACTLY this token (and nothing else) when it has
+// nothing to report. The scheduler then sends no message at all — the correct
+// way to "stop silently" without leaking a no-op acknowledgement to the group.
+export const SCHEDULED_SILENT_SENTINEL = '[[SILENT]]';
+
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
 export const CONTAINER_TIMEOUT = parseInt(

@@ -16,7 +16,7 @@ import {
 } from './pipeline/index.js';
 import type { InboundMessage } from './pipeline/types.js';
 import type { Channel } from './types.js';
-import { MAIN_GROUP_FOLDER } from './config.js';
+import { MAIN_GROUP_FOLDER, RATE_LIMIT_EXEMPT_FOLDERS } from './config.js';
 import { getRegisteredGroups } from './registry.js';
 
 // ── Response time tracking (for adaptive learning) ──────────────
@@ -113,7 +113,9 @@ const inboundPipeline = new InboundPipeline()
 const outboundRateLimiter = new OutboundRateLimiter(
   RATE_LIMITS.outbound,
   (jid) => getRegisteredGroups()[jid]?.folder,
-  [MAIN_GROUP_FOLDER],
+  // Owner-facing ops channels (main + SGS/Sheridan/Snak notification groups) are
+  // exempt — the per-day cap is for customer channels, not the owner's own feeds.
+  RATE_LIMIT_EXEMPT_FOLDERS.length ? RATE_LIMIT_EXEMPT_FOLDERS : [MAIN_GROUP_FOLDER],
 );
 
 const outboundPipeline = new OutboundPipeline()

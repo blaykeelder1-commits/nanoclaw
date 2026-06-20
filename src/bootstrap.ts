@@ -19,6 +19,7 @@ import {
   getTaskById,
   initDatabase,
   storeChatMetadata,
+  updateTask,
   storeMessage,
 } from './db.js';
 import { CronExpressionParser } from 'cron-parser';
@@ -113,8 +114,50 @@ export function seedHealthTasks(): void {
     return;
   }
 
-  const seedTask = (id: string, cron: string, prompt: string, opts?: { model?: string; budget_usd?: number }) => {
-    if (getTaskById(id)) return;
+  // SGS fulfillment runs in its OWN WhatsApp channel so its digests/approvals
+  // don't mix with the Sheridan/Snak main command channel. Resolve the JID from
+  // the registered `sgs` group if present, else the SGS_GROUP_JID env override,
+  // else fall back to main (so seeding never breaks before the group is wired).
+  let sgsJid: string | null = null;
+  for (const [jid, group] of Object.entries(registeredGroups)) {
+    if (group.folder === 'sgs') { sgsJid = jid; break; }
+  }
+  sgsJid = sgsJid || process.env.SGS_GROUP_JID || mainJid!;
+  const sgsTarget: { group_folder?: string; chat_jid?: string } = sgsJid === mainJid
+    ? { /* not yet isolated — runs in main */ }
+    : { group_folder: 'sgs', chat_jid: sgsJid };
+  if (sgsJid === mainJid) {
+    logger.warn('SGS group not registered and SGS_GROUP_JID unset — SGS tasks will post to MAIN until wired');
+  }
+
+  const seedTask = (
+    id: string,
+    cron: string,
+    prompt: string,
+    opts?: { model?: string; budget_usd?: number; group_folder?: string; chat_jid?: string },
+  ) => {
+    const existing = getTaskById(id);
+    if (existing) {
+      // Task already seeded — keep its run history/timing, but refresh the parts
+      // that live in code (prompt + tuning) so edits to THIS file actually take
+      // effect on restart. Without this, prompt changes silently no-op forever.
+      const updates: Parameters<typeof updateTask>[1] = {};
+      if (existing.prompt !== prompt) updates.prompt = prompt;
+      if (opts?.model !== undefined && existing.model !== opts.model) updates.model = opts.model;
+      if (opts?.budget_usd !== undefined && existing.budget_usd !== opts.budget_usd) {
+        updates.budget_usd = opts.budget_usd;
+      }
+      if (existing.schedule_value !== cron) {
+        updates.schedule_type = 'cron';
+        updates.schedule_value = cron;
+        updates.next_run = CronExpressionParser.parse(cron, { tz: TIMEZONE }).next().toISOString();
+      }
+      if (Object.keys(updates).length > 0) {
+        updateTask(id, updates);
+        logger.info({ taskId: id, fields: Object.keys(updates) }, `Refreshed task: ${id}`);
+      }
+      return;
+    }
     const nextRun = CronExpressionParser.parse(cron, { tz: TIMEZONE }).next().toISOString();
     createTask({
       id, group_folder: MAIN_GROUP_FOLDER, chat_jid: mainJid!,
@@ -122,7 +165,7 @@ export function seedHealthTasks(): void {
       context_mode: 'isolated', next_run: nextRun, status: 'active',
       created_at: new Date().toISOString(), ...opts,
     });
-    logger.info({ taskId: id, nextRun }, `Seeded task: ${id}`);
+    logger.info({ taskId: id, nextRun, group: opts?.group_folder ?? MAIN_GROUP_FOLDER }, `Seeded task: ${id}`);
   };
 
   seedTask('health-daily-check', '0 9 * * *',
@@ -265,6 +308,141 @@ Compile into a single executive monthly report for Blayk covering:
 
 Email the report to the owner (check owner-info.md). Also send a summary via WhatsApp.`,
     { budget_usd: 0.75 });
+
+  // Responsive intake sweep — the heartbeat of SGS fulfillment. Runs every 20
+  // min and acts ONLY on never-seen tickets (the `pending-new` work-list), so it
+  // is idempotent: a ticket leaves the list the instant Andy claims or marks it
+  // seen, and is never re-notified or re-worked. CLAIM-FIRST is the hard rule.
+  seedTask('sgs-intake-sweep', '*/20 * * * *',
+    `SGS intake sweep — pick up brand-new customer edit requests, fast and exactly once.
+
+FIRST read groups/sgs/CLAUDE.md (rules) and groups/sgs/edit-lessons.md (what you learned).
+
+1. Run: npx tsx /workspace/project/tools/web/ship-sgs.ts pending-new
+2. If count is 0 → STAY SILENT: reply with EXACTLY [[SILENT]] and nothing else
+   (this runs every 20 min; that token suppresses the message — do NOT add any other text).
+3. Otherwise, for EACH ticket (HARD CAP: 3 per run; let the rest roll to the next sweep). The
+   pending-new output already tells you the answer: a ticket with shippable:true is auto-eligible.
+   a. WhatsApp Blayke ONE line: "📥 New request — {customer} · {site or 'unmapped'} · \"{title}\" ({sla}). On it."
+   b. AUTO-ELIGIBLE (shippable:true — mapped site + safe content change): CLAIM FIRST →
+      ship-sgs.ts claim {crId}. If claimed:false → another run took it → SKIP entirely. If
+      claimed:true → REALITY-CHECK before editing: confirm the request maps to a real change in
+      an actual SITE FILE. If, after investigating the repo, you find it is NOT a website edit —
+      the thing it asks for lives in the app BACKEND / a database / external config (e.g. an
+      in-app poll, product, pricing, or account data change), no site file matches the request,
+      or the request is too ambiguous to execute faithfully — do NOT fabricate or guess an edit.
+      Instead: ship-sgs.ts release {crId} --reason "<why it is not a website edit / what system it
+      actually needs>", WhatsApp ONCE "🔎 Needs you — {customer}: \"{title}\". {reason}", and STOP
+      on this ticket. Otherwise (it IS a real site edit): tri-lens review (🛠 engineer · 📈 marketer
+      · 🙂 customer), make the edit, deploy a PREVIEW via the ship-site flow, then:
+        ship-sgs.ts review-ready {crId} --preview {url} --note "<tri-lens summary>"
+      and WhatsApp: "✅ Ready to review — {customer}: {preview}. {one-line tri-lens}. Approve in
+      the admin Review column or reply 'approve {site}'." Do NOT promote in this run.
+   c. NOT auto-eligible (shippable:false — unmapped site, or promo/checkout/booking/auth/api/
+      secrets/new-page work): do NOT claim. Run ship-sgs.ts mark-seen {crId} (stamps the guard so
+      it is never re-flagged; the ticket stays pending for you), then WhatsApp ONCE:
+        "🔎 Needs you — {customer}: \"{title}\". {reason it needs a human}."
+   d. If prep FAILS after you claimed an auto ticket (build/deploy error, or you simply cannot
+      complete it): run ship-sgs.ts release {crId} --reason "<what failed>" — this returns it to
+      pending WITH a note so it is VISIBLE to Blayke (never leave a claimed ticket silently stuck
+      in_progress), keeps the seen-guard so the sweep will not re-claim and re-stall it, then
+      WhatsApp ONCE "⚠️ Couldn't prepare {customer} \"{title}\": {reason} — left for you", run
+      ship-sgs.ts log to record it, and STOP on that ticket. Do NOT retry it.
+
+Never email customers. Never promote to prod here — that's the approval sweep's job.`,
+    { budget_usd: 0.60, ...sgsTarget });
+
+  // 7am daily digest — a read-only summary so Blayke starts the day with the full
+  // picture. No edits, no claims here; the intake sweep does the work continuously.
+  seedTask('sgs-daily-digest', '0 7 * * *',
+    `SGS morning digest — give Blayke a clean read of the whole board. READ-ONLY (no edits/claims).
+
+1. Read groups/sgs/CLAUDE.md and groups/sgs/edit-lessons.md.
+2. Run: npx tsx /workspace/project/tools/web/ship-sgs.ts pending   (full open list, SLA-sorted)
+3. Send Blayke ONE WhatsApp digest: overdue first, then by SLA. Per ticket: customer · title ·
+   SLA · current state (awaiting your review / needs you / in progress) · your one-line tri-lens read.
+4. End with what you SEE needs doing today (1-3 bullets). Do NOT prepare previews or change any
+   status in this run — the intake sweep handles new tickets every 20 min. Never email customers.`,
+    { budget_usd: 0.40, ...sgsTarget });
+
+  // Once-daily loud-but-bounded check for tickets that got stuck mid-prep
+  // (claimed → in_progress but never reached review_ready). Surfaces silent
+  // failures without per-sweep spam.
+  seedTask('sgs-stale-digest', '0 13 * * *',
+    `SGS stale-ticket check — catch anything stuck so nothing fails silently in the background.
+
+1. Run: npx tsx /workspace/project/tools/web/ship-sgs.ts pending  and also fetch in_progress via
+   the get/list flow (status=in_progress). Identify tickets that have been in_progress > 12h with
+   no previewUrl (Andy claimed them but prep didn't finish) — check agentNote for a FAILED marker.
+2. If any exist, WhatsApp Blayke ONE digest listing them (customer · title · how long stuck · the
+   FAILED reason if recorded) so he can re-run or handle them. If none, reply with
+   EXACTLY [[SILENT]] and nothing else (that token suppresses the message).
+3. Do NOT auto-retry them here (prevents loops). This is a visibility net, not a worker.`,
+    { budget_usd: 0.30, ...sgsTarget });
+
+  // Frequent sweep so an in-admin (or WhatsApp) approval ships promptly without
+  // waiting for the 7am run. Cheap: usually a no-op when nothing is approved.
+  seedTask('sgs-approval-sweep', '*/30 * * * *',
+    `SGS approval sweep — promote anything Blayke just approved.
+
+1. Run: npx tsx /workspace/project/tools/web/ship-sgs.ts approved
+2. If count is 0 → STAY SILENT: reply with EXACTLY [[SILENT]] and nothing else
+   (this runs every 30 min; that token suppresses the message).
+3. For each approved+preview ticket: promote its site to PROD via the ship-site flow,
+   verify a live 2xx (relay the verified receipt — never claim live without it), then:
+     ship-sgs.ts complete <crId> -m "<what shipped + live URL>"
+   SGS emails the customer and moves it to Done. You NEVER email customers.
+4. Log the win: ship-sgs.ts log <crId> --site <site> --action auto --summary "..." --lesson "...".
+5. WhatsApp Blayke a one-line "shipped: <customer> — <title> — <live URL>" per promotion.
+
+Read groups/sgs/CLAUDE.md first. Respect every guardrail — if a promote fails verification,
+do NOT mark complete; revert/triage and tell Blayke.`,
+    { budget_usd: 0.40, ...sgsTarget });
+
+  // Customer support replies — Andy answers portal Support questions the same way
+  // he handles edits: his own agent, your Max subscription, NO API key. Advisory
+  // only. Runs often so a customer gets an answer within a few minutes.
+  seedTask('sgs-support-sweep', '*/5 * * * *',
+    `SGS support sweep — answer customers waiting in the portal Support chat. Advisory only.
+
+1. Run: npx tsx /workspace/project/tools/web/support-sgs.ts pending
+2. If pendingCount is 0 → STAY SILENT: reply with EXACTLY [[SILENT]] and nothing else
+   (this runs every 5 min; that token suppresses the message — never write anything else on empty).
+3. The output includes "rulebook" (the rules you MUST follow) and "threads" (each = one
+   customer waiting). For EACH thread (HARD CAP: 3 per run; the rest roll to the next sweep):
+   a. Read the thread's "messages" (the conversation so far) and "context" (that customer's
+      OWN plan, sites, and recent change requests — never reference anyone else's data).
+   b. Write ONE helpful, warm, plain-language reply that obeys the rulebook:
+      - Answer their question / explain status using the context.
+      - If they want an actual edit, guide them to submit a Change Request (don't make the edit).
+      - NEVER claim you did anything you can't do here. No binding price/time promises.
+   c. Decide if this needs a human (upset, refund/cancellation/billing dispute, out of scope,
+      asks for a person, or something urgent/broken). If so, add --escalate --reason "<why>".
+   d. Post it: support-sgs.ts reply <organizationId> --message "<your reply>" [--escalate --reason "..."]
+   e. If you escalated, also WhatsApp Blayke ONE line: "🆘 Support escalated — {orgName}: {why}."
+4. Do NOT email customers (the reply lands in their portal thread). Do NOT edit or deploy any
+   site from here. Do NOT post more than one reply per thread per run.
+
+Read groups/sgs/CLAUDE.md first for customer-specific preferences.`,
+    { budget_usd: 0.50, ...sgsTarget });
+
+  // Weekly learning-loop consolidation: turn repeated lessons into standing rules
+  // so Andy compounds skill instead of re-learning. This is the rulebook self-repair.
+  seedTask('sgs-rulebook-review', '0 12 * * 0',
+    `SGS weekly rulebook review — make the rulebook smarter from real outcomes.
+
+1. Read groups/sgs/edit-lessons.md (the append-only learning log) and groups/sgs/CLAUDE.md.
+2. Cluster the week's lessons. Any pattern that appears 2+ times, or any Blayke REJECTION,
+   becomes a candidate standing rule.
+3. PROMOTE durable patterns into groups/sgs/CLAUDE.md as concise rules (edit the file
+   directly): customer preferences, what got rejected and why, what consistently worked,
+   tighter guardrails. Keep CLAUDE.md tight — merge/replace, don't just append.
+4. Prune stale or one-off notes from edit-lessons.md once promoted.
+5. WhatsApp Blayke a short "what I learned this week + what I changed in the rulebook +
+   what I see that needs doing" note (3-6 bullets, WhatsApp formatting).
+
+This is how the operation gets smoother and more innovative every week. Never email customers.`,
+    { budget_usd: 0.40, ...sgsTarget });
 }
 
 // ── CLI readiness check ───────────────────────────────────────────

@@ -281,6 +281,18 @@ export class GmailChannel implements Channel {
           logger.info({ pending: allUids.length, processing: MAX_PER_CYCLE }, 'Gmail backlog detected — processing in chunks');
         }
 
+        // Mark a message \Seen so the "unseen since 14d" search stops re-fetching it.
+        // EVERY non-delivery skip below (self, assistant echo, dedup, filter-reject)
+        // must call this — otherwise that message stays unseen and the poller
+        // re-processes the same set every 60s forever (the Gmail backlog loop).
+        const markSeen = async (u: number) => {
+          try {
+            await client.messageFlagsAdd(String(u), ['\\Seen'], { uid: true });
+          } catch (e) {
+            logger.debug({ uid: u, err: e }, 'mark-seen failed (will retry next poll)');
+          }
+        };
+
         for (const uid of uids) {
           try {
             const message = await client.fetchOne(
@@ -306,16 +318,20 @@ export class GmailChannel implements Channel {
               IMAP_USER.toLowerCase(),
               EMAIL_SNAK_ADDRESS.toLowerCase(),
             ].filter(Boolean);
-            if (selfAddresses.some(a => senderEmail === a)) continue;
+            // Our own outbound (booking notices, reports we email to snakgroupteam)
+            // lands back in this inbox — skip it, but mark seen so it doesn't re-loop.
+            if (selfAddresses.some(a => senderEmail === a)) { await markSeen(uid); continue; }
 
             // Also skip if sender name contains our assistant name (Gmail rewrites From headers)
             if (ASSISTANT_NAME && senderName.toLowerCase().includes(ASSISTANT_NAME.toLowerCase())) {
+              await markSeen(uid);
               continue;
             }
 
             // DB-level dedup: skip if this messageId was already stored (survives restarts)
             if (messageExists(messageId)) {
               logger.debug({ messageId, uid }, 'Email already processed (DB dedup), skipping');
+              await markSeen(uid); // already handled — stop the unseen search re-fetching it
               continue;
             }
 
@@ -352,6 +368,9 @@ export class GmailChannel implements Channel {
               });
               if (!shouldProcess) {
                 logger.debug({ from: senderEmail, subject }, 'Message rejected by pipeline filter');
+                // Not actionable (autoresponder / DMARC / noreply / off-topic). Mark seen so
+                // the unseen-since-14d search doesn't re-fetch the same flood every 60s.
+                await markSeen(uid);
                 continue;
               }
             }

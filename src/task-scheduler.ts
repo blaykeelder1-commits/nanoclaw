@@ -12,6 +12,7 @@ import {
   MAIN_GROUP_FOLDER,
   MAX_DAILY_SPEND_USD,
   MODEL_SCHEDULED,
+  SCHEDULED_SILENT_SENTINEL,
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
@@ -48,6 +49,19 @@ export interface SchedulerDependencies {
     groupFolder: string,
   ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
+}
+
+/**
+ * A scheduled task "stays silent" by emitting the silent sentinel (and nothing
+ * else). Treat a result as silent when, after stripping every sentinel token,
+ * nothing meaningful remains. This is the deterministic replacement for relying
+ * on the model to literally produce zero output — which it rarely does, leaking
+ * no-op "Nothing pending." lines that pile up against the outbound rate cap.
+ */
+function isSilentResult(text: string | undefined | null): boolean {
+  if (!text) return true;
+  const stripped = text.split(SCHEDULED_SILENT_SENTINEL).join('').trim();
+  return stripped.length === 0;
 }
 
 /** Send an alert to the main group (Blayk's WhatsApp). */
@@ -182,8 +196,14 @@ async function runTask(
         }
       } else if (cliOutput.result) {
         result = cliOutput.result;
-        // Forward CLI result to user
-        await deps.sendMessage(task.chat_jid, cliOutput.result);
+        // Forward CLI result to user — unless the task chose to stay silent
+        // (empty or sentinel-only). Suppressing here stops no-op sweep acks
+        // from consuming the group's outbound rate budget.
+        if (isSilentResult(cliOutput.result)) {
+          logger.info({ taskId: task.id }, 'Scheduled task stayed silent — no message sent');
+        } else {
+          await deps.sendMessage(task.chat_jid, cliOutput.result);
+        }
       }
 
       if (!error) {
@@ -345,7 +365,11 @@ async function runTaskViaContainer(
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
-          await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          if (isSilentResult(streamedOutput.result)) {
+            logger.info({ taskId: task.id }, 'Scheduled task stayed silent — no message sent');
+          } else {
+            await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          }
           resetIdleTimer();
         }
         if (streamedOutput.status === 'error') {
