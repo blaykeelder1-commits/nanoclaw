@@ -15,7 +15,7 @@ export const EQUIPMENT: Record<EquipmentKey, EquipmentConfig> = {
   carhauler: {
     key: 'carhauler',
     label: 'Car Hauler',
-    rate: 65,
+    rate: 69,
     unit: 'day',
     deposit: 50,
     calendarId: 'c_f92948a07076df3480b68fcaac0dd44cfc815ca9265999f709254dfca5fc64ad@group.calendar.google.com',
@@ -241,6 +241,27 @@ function isSameWeekBooking(dates: string[]): boolean {
   return diffDays <= 7;
 }
 
+// ── Longer-Rental Discount ──────────────────────────────────────────
+// Automatic price break that rewards longer rentals. Lower turnover per
+// rental-day (one pickup/inspection serves more days) + guaranteed utilization
+// means we can discount the per-day rate and still come out ahead vs. an idle
+// trailer. Applied to the rental + add-ons subtotal (never the deposit) and
+// does NOT stack with a promo code — the customer gets whichever is larger.
+//   Car hauler / utility: 3–6 days = 10% off, 7+ days = 18% off (weekly rate).
+//   RV camper:           7+ nights = 10% off (a smaller, premium-product break).
+export function durationDiscountPct(equipmentKey: EquipmentKey, numDays: number): number {
+  if (equipmentKey === 'rv') {
+    return numDays >= 7 ? 10 : 0;
+  }
+  if (numDays >= 7) return 18;
+  if (numDays >= 3) return 10;
+  return 0;
+}
+
+function durationDiscountLabel(numDays: number): string {
+  return numDays >= 7 ? 'Weekly rate' : '3+ day discount';
+}
+
 // ── Price Calculation ───────────────────────────────────────────────
 
 export function calculatePrice(
@@ -354,16 +375,25 @@ export function calculatePrice(
 
   const grossSubtotal = lineItems.reduce((sum, item) => sum + item.total, 0);
 
-  // Promo discount: a flat percentage off the rental + add-ons subtotal.
-  // The refundable security deposit is never discounted. Recorded as a negative
-  // line item so the breakdown's lineItems always sum to the net subtotal.
+  // Discount: the customer gets the BETTER of an active promo code or the
+  // automatic longer-rental discount — they never stack (protects margin). A
+  // flat percentage off the rental + add-ons subtotal; the refundable deposit is
+  // never discounted. Recorded as a negative line item so the breakdown's
+  // lineItems always sum to the net subtotal.
+  const promoPct = promo?.percentOff || 0;
+  const durationPct = durationDiscountPct(equipmentKey, numDays);
+  const usePromo = promoPct >= durationPct && promoPct > 0;
+  const discountPct = Math.max(promoPct, durationPct);
   let discount: { label: string; amount: number } | undefined;
-  if (promo?.percentOff) {
-    const amount = Math.round((grossSubtotal * promo.percentOff) / 100 * 100) / 100;
+  if (discountPct > 0) {
+    const amount = Math.round((grossSubtotal * discountPct) / 100 * 100) / 100;
     if (amount > 0) {
-      discount = { label: `${opts?.promoCode?.toUpperCase().trim()} promo — ${promo.percentOff}% off`, amount };
+      const label = usePromo
+        ? `${opts?.promoCode?.toUpperCase().trim()} promo — ${promoPct}% off`
+        : `${durationDiscountLabel(numDays)} — ${durationPct}% off`;
+      discount = { label, amount };
       lineItems.push({
-        name: discount.label,
+        name: label,
         quantity: 1,
         unitPrice: -amount,
         total: -amount,

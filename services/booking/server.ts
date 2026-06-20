@@ -391,33 +391,24 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
     return;
   }
 
-  // License photo is mandatory — must exist on disk under the session before
-  // we accept payment. Prior bug: customers paid Square but the photo never
-  // uploaded; owner had to chase them for it after the fact.
-  if (!body.licenseFileId || !body.sessionId
-      || !isSafePathSegment(body.licenseFileId) || !isSafePathSegment(body.sessionId)) {
-    json(res, 400, { error: "Driver's license photo is required. Please upload it before paying." });
-    return;
-  }
-  const stagedLicense = path.join(UPLOAD_DIR, body.sessionId, body.licenseFileId);
-  if (!fs.existsSync(stagedLicense)) {
-    json(res, 400, { error: 'License photo missing on server — please re-upload your driver\'s license and try again.' });
+  // License photo is OPTIONAL at checkout — it's now collected after payment via
+  // the /license/:bookingId page (surfaced on the confirmation screen + email).
+  // Removing this pre-payment gate is the single biggest conversion lever: most
+  // people don't have their license photo ready before they've committed. If the
+  // form still happens to stage one, validate the reference and keep it below.
+  if (body.licenseFileId && body.sessionId
+      && (!isSafePathSegment(body.licenseFileId) || !isSafePathSegment(body.sessionId))) {
+    json(res, 400, { error: 'Invalid license reference.' });
     return;
   }
 
-  // Signed rental agreement is mandatory. Step 4 of form.html POSTs to
-  // /api/agreements/pre-booking and threads the returned agreementToken back
-  // here. The token consumes itself when we link it to the new booking row.
+  // Signed rental agreement is OPTIONAL at checkout — collected after payment via
+  // the /sign/:bookingId/:signToken page. Only link a pre-signed agreement if the
+  // form already supplied a valid token (legacy path); otherwise skip.
   const agreementToken = (body as any).agreementToken as string | undefined;
-  if (!agreementToken || typeof agreementToken !== 'string') {
-    json(res, 400, { error: 'agreement_required', detail: 'Please sign the rental agreement before paying.' });
-    return;
-  }
-  const pendingAgreement = getAgreementByToken(agreementToken);
-  if (!pendingAgreement) {
-    json(res, 400, { error: 'agreement_invalid', detail: 'Your signed agreement could not be found — please re-sign and try again.' });
-    return;
-  }
+  const pendingAgreement = (agreementToken && typeof agreementToken === 'string')
+    ? getAgreementByToken(agreementToken)
+    : null;
 
   // Generate booking ID and create Square payment link
   const bookingId = generateBookingId();
@@ -451,9 +442,18 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
     pickupTime,
   });
 
-  // Bind the pre-signed agreement to the new booking. This consumes the
-  // one-time token (agreement_token is cleared) and stamps bookings.agreement_id.
-  linkAgreementToBooking(pendingAgreement.id, booking.id);
+  // Bind the pre-signed agreement to the new booking only if one was supplied.
+  // This consumes the one-time token and stamps bookings.agreement_id.
+  if (pendingAgreement) {
+    linkAgreementToBooking(pendingAgreement.id, booking.id);
+  }
+
+  // Mint a one-time sign token so the post-payment confirmation screen (and the
+  // confirmation email) can link the customer to /sign/:id/:token to e-sign the
+  // rental agreement. Harmless if a pre-signed agreement was already linked above
+  // — the sign page is idempotent and short-circuits once agreement_id is set.
+  const signToken = generateSignToken();
+  setBookingSignToken(booking.id, signToken);
 
   // Associate uploaded license photo with the booking (move session-scoped upload → booking-scoped)
   if (body.licenseFileId && body.sessionId
@@ -764,13 +764,16 @@ async function handleSquareWebhook(req: http.IncomingMessage, res: http.ServerRe
     );
     notifyOwnerOnce(updatedBooking, 'webhook');
 
-    // Agent-initiated bookings collect the license AFTER payment via a Quo
-    // SMS to the customer's phone. Send once per booking (idempotent on the
-    // license_sms_sent_at stamp + the licenseFileId check).
-    if (updatedBooking.agentInitiated && !updatedBooking.licenseFileId && !updatedBooking.licenseSmsSentAt) {
+    // License + signature are now collected AFTER payment for EVERY booking (web
+    // and agent), so text the customer the link(s) for whatever is still missing.
+    // Send once per booking (idempotent on the license_sms_sent_at stamp).
+    if ((!updatedBooking.licenseFileId || !updatedBooking.agreementId) && !updatedBooking.licenseSmsSentAt) {
       const publicBase = process.env.BOOKING_PUBLIC_BASE_URL || 'https://chat.sheridantrailerrentals.us';
       const uploadUrl = `${publicBase}/license/${updatedBooking.id}`;
-      const smsBody = `Sheridan Rentals — payment received for ${updatedBooking.equipmentLabel} on ${updatedBooking.dates[0]}. Upload your driver's license here to lock in pickup: ${uploadUrl}`;
+      const signUrl = updatedBooking.signToken ? `${publicBase}/sign/${updatedBooking.id}/${updatedBooking.signToken}` : '';
+      let smsBody = `Sheridan Rentals — payment received for ${updatedBooking.equipmentLabel} on ${updatedBooking.dates[0]}.`;
+      if (!updatedBooking.licenseFileId) smsBody += ` Upload your driver's license to lock in pickup: ${uploadUrl}`;
+      if (!updatedBooking.agreementId && signUrl) smsBody += ` Then e-sign your rental agreement: ${signUrl}`;
       sendQuoSMS(updatedBooking.customer.phone, smsBody).then(result => {
         if (result.ok) {
           markLicenseSmsSent(updatedBooking.id);
@@ -1178,6 +1181,11 @@ function handleGetBooking(res: http.ServerResponse, bookingId: string): void {
     && !!booking.licenseFileId
     && !!booking.agreementId
     && !booking.paymentUrl;
+  // Post-payment collection links — surfaced on the confirmation screen so the
+  // customer uploads their license + signs the agreement after they've paid.
+  const publicBase = process.env.BOOKING_PUBLIC_BASE_URL || 'https://chat.sheridantrailerrentals.us';
+  const licenseUploadUrl = `${publicBase}/license/${booking.id}`;
+  const signUrl = booking.signToken ? `${publicBase}/sign/${booking.id}/${booking.signToken}` : '';
   json(res, 200, {
     id: booking.id,
     equipment: booking.equipmentLabel,
@@ -1204,6 +1212,8 @@ function handleGetBooking(res: http.ServerResponse, bookingId: string): void {
     agentInitiated: booking.agentInitiated,
     licenseUploaded: !!booking.licenseFileId,
     agreementSigned: !!booking.agreementId,
+    licenseUploadUrl,
+    signUrl,
     agreementId: booking.agreementId || '',
     paymentUrl: booking.paymentUrl,
     readyToPay,

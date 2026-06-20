@@ -243,7 +243,7 @@ export async function sendCustomerConfirmation(booking: Booking): Promise<void> 
             Questions? Reply to this email or text us — we're always available.
           </p>
 
-          ${agreementLinkRow(booking)}
+          ${finishBookingSection(booking)}
 
           <p style="font-size: 13px; color: #9ca3af; margin-top: 24px; padding-top: 16px; border-top: 1px solid #e5e7eb;">
             Booking ID: ${booking.id}<br>
@@ -263,6 +263,40 @@ function agreementLinkRow(booking: Booking): string {
     <p style="font-size: 13px; color: #4b5563; margin-top: 14px; padding-top: 14px; border-top: 1px solid #e5e7eb;">
       <strong>Signed rental agreement:</strong> <a href="${url}" style="color: #0e7490;">${url}</a>
     </p>`;
+}
+
+function finishBookingSection(booking: Booking): string {
+  const base = process.env.BOOKING_PUBLIC_BASE_URL || 'https://chat.sheridantrailerrentals.us';
+
+  // Already signed — link the completed agreement for their records.
+  if (booking.agreementId) {
+    const url = `${base}/api/agreements/${booking.agreementId}`;
+    return `
+    <p style="font-size: 13px; color: #4b5563; margin-top: 14px; padding-top: 14px; border-top: 1px solid #e5e7eb;">
+      <strong>Signed rental agreement:</strong> <a href="${url}" style="color: #0e7490;">${url}</a>
+    </p>`;
+  }
+
+  // Not signed yet — show the steps still needed to release the lock code.
+  const items: string[] = [];
+  if (!booking.licenseFileId) {
+    const licenseUrl = `${base}/license/${booking.id}`;
+    items.push(`<li style="margin-bottom: 12px;">📷 <strong>Upload your driver&rsquo;s license</strong><br><a href="${licenseUrl}" style="color: #1d4ed8; word-break: break-all;">${licenseUrl}</a></li>`);
+  }
+  if (booking.signToken) {
+    const signUrl = `${base}/sign/${booking.id}/${booking.signToken}`;
+    items.push(`<li style="margin-bottom: 0;">✍️ <strong>Sign your rental agreement</strong><br><a href="${signUrl}" style="color: #1d4ed8; word-break: break-all;">${signUrl}</a></li>`);
+  }
+  if (items.length === 0) return '';
+
+  return `
+    <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 16px; margin: 16px 0;">
+      <h3 style="margin: 0 0 8px; color: #b45309; font-size: 15px;">⚡ One quick step to finish</h3>
+      <p style="margin: 0 0 12px; font-size: 13px; color: #92400e; line-height: 1.5;">Your payment is in and your dates are reserved. To release your lock code, just complete the following &mdash; it only takes a minute:</p>
+      <ul style="margin: 0; padding-left: 0; font-size: 14px; color: #374151; line-height: 1.5; list-style: none;">
+        ${items.join('\n        ')}
+      </ul>
+    </div>`;
 }
 
 // ── Payment Received Notification (to owner) ────────────────────────
