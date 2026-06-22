@@ -1,10 +1,79 @@
 ---
 name: social-posting
 description: Post content to X (Twitter), Facebook, and LinkedIn. Manage LinkedIn warm outreach and connection requests. Use when asked to post on social media, share content, manage social presence, or do LinkedIn outreach.
-allowed-tools: Bash(npx tsx /workspace/project/tools/social/post-tweet.ts *), Bash(npx tsx /workspace/project/tools/social/post-facebook.ts *), Bash(npx tsx /workspace/project/tools/social/post-instagram.ts *), Bash(npx tsx /workspace/project/tools/social/post-tiktok.ts *), Bash(npx tsx /workspace/project/tools/social/post-linkedin.ts *), Bash(npx tsx /workspace/project/tools/social/linkedin-connect.ts *), Bash(npx tsx /workspace/project/tools/social/read-facebook-insights.ts *), Bash(npx tsx /workspace/project/tools/social/read-instagram-insights.ts *), Bash(npx tsx /workspace/project/tools/social/fb-marketplace.ts *), Bash(npx tsx /workspace/project/tools/gbp/gbp.ts *), Bash(npx tsx /workspace/project/tools/drive/drive.ts *)
+allowed-tools: Bash(npx tsx /workspace/project/tools/social/post-all.ts *), Bash(npx tsx /workspace/project/tools/social/prepare-asset.ts *), Bash(npx tsx /workspace/project/tools/social/post-tweet.ts *), Bash(npx tsx /workspace/project/tools/social/post-facebook.ts *), Bash(npx tsx /workspace/project/tools/social/post-instagram.ts *), Bash(npx tsx /workspace/project/tools/social/post-tiktok.ts *), Bash(npx tsx /workspace/project/tools/social/post-linkedin.ts *), Bash(npx tsx /workspace/project/tools/social/linkedin-connect.ts *), Bash(npx tsx /workspace/project/tools/social/read-facebook-insights.ts *), Bash(npx tsx /workspace/project/tools/social/read-instagram-insights.ts *), Bash(npx tsx /workspace/project/tools/social/fb-marketplace.ts *), Bash(npx tsx /workspace/project/tools/gbp/gbp.ts *), Bash(npx tsx /workspace/project/tools/drive/drive.ts *)
 ---
 
 # Social Media Posting
+
+## Publishing approved content — use this (and ALWAYS report a receipt)
+
+Once Blayke replies **"approved"** to a drafted post, publish it with the fan-out
+orchestrator. It posts to every connected platform and tells you exactly which ones
+succeeded, which are not connected, and which errored — so nothing fails silently.
+
+```bash
+npx tsx /workspace/project/tools/social/post-all.ts \
+  --group snak|sheridan \
+  --message "Your post copy" \
+  [--asset "IMG_3974" | --asset 3] \       # ⭐ pull a photo/video from the group's Drive folder (see below)
+  [--image "https://public-image-url"] \   # required for Instagram; recommended for Facebook
+  [--source "/tmp/photo.jpg"] \            # local file upload for Facebook (alt to --image)
+  [--link "https://..."] \
+  [--video "https://public-video-url"] \   # required for TikTok
+  [--place-id "<facebook_place_id>"] \
+  [--platforms facebook,instagram,linkedin,x,tiktok] \  # default: all
+  [--dry-run]
+```
+
+### ⭐ Attaching a real photo/video with `--asset` (preferred)
+
+Blayke uploads marketing photos/videos to a shared Google Drive folder. **Always try to
+attach a real asset** — photo/video posts get far more engagement than text-only.
+
+`--asset` pulls the file from the folder, converts iPhone formats automatically
+(HEIC→JPEG, HEVC/MOV→MP4), and wires it to every platform correctly in one step: the
+local file is uploaded to Facebook, and a public HTTPS URL is handed to Instagram/TikTok.
+No manual download, conversion, or URL hosting needed.
+
+```bash
+# See what's in the folder (index, name, image/video, size):
+npx tsx /workspace/project/tools/social/prepare-asset.ts --group snak --list
+
+# Then post with one of them — by name fragment or by index:
+npx tsx /workspace/project/tools/social/post-all.ts --group snak \
+  --message "Fresh restock at the office! 🔧" --asset IMG_3974
+```
+
+Notes:
+- `--asset` accepts a **name fragment** (`--asset IMG_3974`) or a **1-based index** (`--asset 3`).
+- If the asset can't be fetched, `post-all` says so loudly and posts nothing — it never
+  silently publishes text-only when you meant to include a photo.
+- Currently wired for `--group snak` (folder `DRIVE_ASSETS_FOLDER_ID_SNAK`). Sheridan can be
+  added the same way once its folder is shared.
+- Don't combine `--asset` with `--image`/`--source`/`--video`; `--asset` sets those for you.
+
+It prints JSON with a ready-to-send `receipt` field, e.g.:
+
+```
+*Post receipt — Snak Group*
+✅ Facebook (Snak Group)
+✅ LinkedIn
+❌ Instagram (Snak Group) — platform credentials are not configured
+❌ X (Twitter) — platform credentials are not configured
+❌ TikTok — platform credentials are not configured
+```
+
+**MANDATORY — never report a post as "done" without the receipt.** After any publish
+(whether via `post-all` or an individual poster), send Blayke ONE WhatsApp message that
+lists the per-platform result (✅ posted / ❌ not connected / ⏭️ skipped / ⚠️ error).
+If a platform shows ❌ or ⚠️, say so plainly and why — do NOT claim "posted everywhere."
+Copy the `receipt` field from `post-all` straight into your `send_message`.
+
+> Need to stagger posts to look less automated? Call `post-all` once per platform with
+> `--platforms <one>` across your schedule — you still get a receipt for each.
+
+The individual per-platform tools below remain available for one-off posts and edge cases.
 
 ## Post to X (Twitter)
 
@@ -279,6 +348,7 @@ When generating weekly posts (Sunday), create platform-adapted versions of each 
 2. Never post identical content across all platforms
 3. **Post timing**: Stagger posts by 30-60 minutes across platforms to avoid looking automated (e.g., Facebook at 9:00 AM, Instagram at 9:30 AM, X at 10:00 AM, LinkedIn at 10:30 AM)
 4. Each platform version should feel native — not like a copy-paste from another platform
+5. **Publish via `post-all` and always send the per-platform receipt** (see top of this skill). Never tell Blayke a post went out without confirming which platforms actually succeeded and which are not connected / errored.
 
 ## Google Business Profile Posting
 

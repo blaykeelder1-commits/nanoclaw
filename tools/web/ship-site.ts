@@ -134,10 +134,25 @@ function checkoutPath(site: Site): string {
   return path.join(SITES_DIR, site.repo);
 }
 
-function authedRemote(site: Site): string {
+/**
+ * Build the git remote URL.
+ * - With a GITHUB_TOKEN: authenticated URL (read + write).
+ * - Without one: anonymous HTTPS, which is sufficient to CLONE/FETCH a *public*
+ *   repo (read-only — all preview work). Writing (promote/push) still requires a
+ *   token, so we fail loudly only when write access is actually needed.
+ */
+function remoteUrl(site: Site, opts?: { write?: boolean }): string {
   const token = process.env.GITHUB_TOKEN;
-  if (!token) throw new ShipError('GITHUB_TOKEN is not set');
-  return `https://x-access-token:${token}@github.com/${site.owner}/${site.repo}.git`;
+  if (token) {
+    return `https://x-access-token:${token}@github.com/${site.owner}/${site.repo}.git`;
+  }
+  if (opts?.write) {
+    throw new ShipError(
+      'GITHUB_TOKEN is not set — publishing (promote) requires a write token. ' +
+      'Previewing public repos works without one.',
+    );
+  }
+  return `https://github.com/${site.owner}/${site.repo}.git`;
 }
 
 function requireCloudflareEnv(): void {
@@ -170,7 +185,7 @@ function clearPending(name: string): void {
 /** Clone if missing, otherwise hard-reset the checkout to origin/<prodBranch>. */
 function ensureCleanCheckout(site: Site): string {
   const dir = checkoutPath(site);
-  const remote = authedRemote(site);
+  const remote = remoteUrl(site);
   if (!fs.existsSync(path.join(dir, '.git'))) {
     fs.mkdirSync(SITES_DIR, { recursive: true });
     run('git', ['clone', '--branch', site.gitBranch, remote, dir]);
@@ -340,7 +355,7 @@ async function cmdPromote(name: string): Promise<void> {
     throw new ShipError(`nothing to promote for "${name}" — run preview first`);
   }
   const dir = checkoutPath(site);
-  const remote = authedRemote(site);
+  const remote = remoteUrl(site, { write: true });
 
   // Sync prod branch, then fast-forward it to the previewed commit.
   run('git', ['remote', 'set-url', 'origin', remote], dir);

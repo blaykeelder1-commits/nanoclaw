@@ -350,6 +350,11 @@ const SECRETS_DEPLOY = [
   'CLOUDFLARE_API_TOKEN',
   'CLOUDFLARE_ACCOUNT_ID',
 ] as const;
+// SGS platform access. Used by tools/web/ship-sgs.ts to read/close change requests.
+const SECRETS_SGS = [
+  'ANDY_SERVICE_TOKEN',
+  'SGS_BASE_URL',
+] as const;
 
 // All secret keys (main group gets everything)
 const ALL_SECRET_KEYS = [
@@ -365,6 +370,7 @@ const ALL_SECRET_KEYS = [
   ...SECRETS_SEO,
   ...SECRETS_TIKTOK,
   ...SECRETS_DEPLOY,
+  ...SECRETS_SGS,
 ] as const;
 
 // Non-main groups get core + google + square (enough for briefings, CRM, follow-ups)
@@ -385,6 +391,7 @@ const SCOPE_MAP: Record<string, readonly string[]> = {
   seo: SECRETS_SEO,
   tiktok: SECRETS_TIKTOK,
   deploy: SECRETS_DEPLOY,
+  sgs: [...SECRETS_DEPLOY, ...SECRETS_SGS],
 };
 
 /**

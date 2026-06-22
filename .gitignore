@@ -13,13 +13,17 @@ logs/
 groups/*
 !groups/main/
 !groups/global/
+!groups/sgs/
 groups/main/*
 groups/global/*
+groups/sgs/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
 !groups/global/fb-posting-workflow.md
 !groups/global/authority.md
 !groups/global/authority-test-cases.md
+!groups/sgs/CLAUDE.md
+!groups/sgs/edit-lessons.md
 
 # Secrets
 *.keys.json
@@ -33,3 +37,6 @@ groups/global/*
 .vscode/
 
 agents-sdk-docs
+
+# Plan-mode worktrees (transient)
+.claude/worktrees/

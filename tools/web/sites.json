@@ -5,10 +5,11 @@
     "repo": "sheridan-site",
     "gitBranch": "master",
     "cfBranch": "main",
-    "build": "npm ci && npm run build",
+    "build": "npm install --no-audit --no-fund && npm run build",
     "deployDir": ".",
     "cfProject": "sheridan-site",
-    "liveUrl": "https://sheridantrailerrentals.us"
+    "liveUrl": "https://sheridantrailerrentals.us",
+    "sgsMatch": ["sheridan"]
   },
   "iddi": {
     "label": "IDDI (vending front-end)",
@@ -16,9 +17,10 @@
     "repo": "vending-front-end-",
     "gitBranch": "main",
     "cfBranch": "main",
-    "build": "npm ci && npm run build",
+    "build": "npm install --no-audit --no-fund && npm run build",
     "deployDir": "build",
     "cfProject": "vending-front-end",
-    "liveUrl": "https://iddisolutions.net"
+    "liveUrl": "https://iddisolutions.net",
+    "sgsMatch": ["iddi", "vending"]
   }
 }

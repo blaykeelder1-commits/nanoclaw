@@ -3,8 +3,11 @@
  * Post to LinkedIn Tool for NanoClaw
  * Usage: npx tsx tools/social/post-linkedin.ts --text "post content" [--link "url"] [--visibility "PUBLIC"] [--dry-run]
  *
- * Uses LinkedIn API v2
- * Environment: LINKEDIN_ACCESS_TOKEN, LINKEDIN_PERSON_URN (format: urn:li:person:XXXXX)
+ * Uses LinkedIn API v2.
+ * Auth (preferred, self-healing): LINKEDIN_CLIENT_ID + LINKEDIN_CLIENT_SECRET + LINKEDIN_REFRESH_TOKEN
+ *   → a fresh access token is minted on each run so it never silently expires.
+ * Auth (fallback, legacy): LINKEDIN_ACCESS_TOKEN (a static token that expires ~every 60 days).
+ * Always required: LINKEDIN_PERSON_URN (format: urn:li:person:XXXXX).
  */
 
 import https from 'https';
@@ -37,6 +40,59 @@ function parseArgs(): LinkedInArgs {
   return { ...result, dryRun } as unknown as LinkedInArgs;
 }
 
+/**
+ * Exchange the long-lived refresh token for a fresh access token.
+ * Returns the new access token, or throws on failure.
+ */
+function refreshAccessToken(clientId: string, clientSecret: string, refreshToken: string): Promise<string> {
+  const body = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+    client_id: clientId,
+    client_secret: clientSecret,
+  }).toString();
+
+  return new Promise((resolve, reject) => {
+    const req = https.request('https://www.linkedin.com/oauth/v2/accessToken', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => data += chunk);
+      res.on('end', () => {
+        let parsed: { access_token?: string } | null = null;
+        try { parsed = JSON.parse(data); } catch { /* non-JSON */ }
+        if (res.statusCode === 200 && parsed?.access_token) {
+          resolve(parsed.access_token);
+        } else {
+          reject(new Error(`token refresh failed (HTTP ${res.statusCode}): ${data.slice(0, 300)}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+/**
+ * Resolve a usable access token: refresh-token flow if client creds are present,
+ * otherwise the static LINKEDIN_ACCESS_TOKEN.
+ */
+async function resolveAccessToken(): Promise<string | undefined> {
+  const clientId = process.env.LINKEDIN_CLIENT_ID;
+  const clientSecret = process.env.LINKEDIN_CLIENT_SECRET;
+  const refreshToken = process.env.LINKEDIN_REFRESH_TOKEN;
+
+  if (clientId && clientSecret && refreshToken) {
+    return refreshAccessToken(clientId, clientSecret, refreshToken);
+  }
+  return process.env.LINKEDIN_ACCESS_TOKEN;
+}
+
 async function postToLinkedIn(args: LinkedInArgs): Promise<void> {
   if (args.dryRun) {
     console.log(JSON.stringify({
@@ -51,13 +107,22 @@ async function postToLinkedIn(args: LinkedInArgs): Promise<void> {
     return;
   }
 
-  const accessToken = process.env.LINKEDIN_ACCESS_TOKEN;
   const personUrn = process.env.LINKEDIN_PERSON_URN;
+  let accessToken: string | undefined;
+  try {
+    accessToken = await resolveAccessToken();
+  } catch (err) {
+    console.error(JSON.stringify({
+      status: 'error',
+      error: `LinkedIn token refresh failed: ${(err as Error).message}`,
+    }));
+    process.exit(1);
+  }
 
   if (!accessToken || !personUrn) {
     console.error(JSON.stringify({
       status: 'error',
-      error: 'Missing LinkedIn credentials. Set LINKEDIN_ACCESS_TOKEN and LINKEDIN_PERSON_URN.',
+      error: 'Missing LinkedIn credentials. Set LINKEDIN_PERSON_URN plus either (LINKEDIN_CLIENT_ID + LINKEDIN_CLIENT_SECRET + LINKEDIN_REFRESH_TOKEN) or a static LINKEDIN_ACCESS_TOKEN.',
     }));
     process.exit(1);
   }
