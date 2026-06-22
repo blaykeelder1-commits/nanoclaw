@@ -44,6 +44,7 @@ import {
 import {
   sendOwnerNotification, sendCustomerConfirmation,
   sendPaymentReceivedNotification, sendCancellationConfirmation,
+  sendLicenseReceivedNotification,
 } from './email.js';
 import { sendQuoSMS } from './quo.js';
 import type {
@@ -966,6 +967,16 @@ async function handleUploadLicenseByBooking(req: http.IncomingMessage, res: http
     setLicensePhoto(bookingId, fileId);
     console.log(`[upload-license] Saved ${bookingId}/${fileId} (${file.data.length} bytes)`);
     json(res, 200, { ok: true, bookingId, fileId });
+
+    // Notify the owner the moment the photo lands, with a token-protected view
+    // link (the photo doesn't exist yet at payment-time owner-notify). Non-blocking.
+    if (booking.signToken) {
+      const publicBase = process.env.BOOKING_PUBLIC_BASE_URL || 'https://chat.sheridantrailerrentals.us';
+      const viewUrl = `${publicBase}/api/license/${bookingId}?t=${booking.signToken}`;
+      sendLicenseReceivedNotification(booking, viewUrl).catch(err =>
+        console.error(`[upload-license] Owner notify email failed for ${bookingId}: ${err.message}`),
+      );
+    }
   } catch (err: any) {
     console.error(`[upload-license] Write error: ${err.message}`);
     json(res, 500, { error: 'Upload failed' });
@@ -1031,6 +1042,43 @@ else{s.className='err';s.textContent='Error: '+(j.error||r.status);b.disabled=fa
 </html>`;
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
   res.end(html);
+}
+
+const CONTENT_TYPE_BY_EXT: Record<string, string> = {
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.webp': 'image/webp', '.heic': 'image/heic', '.heif': 'image/heif',
+};
+
+/**
+ * Owner-only view of a customer's uploaded license photo. Access is gated on
+ * the booking's sign_token (passed as ?t=) — unguessable and per-booking, so no
+ * new secret or schema column is needed. Streams the raw image bytes.
+ */
+function handleGetLicense(res: http.ServerResponse, bookingId: string, token: string): void {
+  if (!isSafePathSegment(bookingId)) { json(res, 400, { error: 'Invalid bookingId' }); return; }
+  const booking = getBooking(bookingId);
+  if (!booking) { json(res, 404, { error: 'Not found' }); return; }
+  // Constant-ish token check. Missing sign_token => never viewable via this route.
+  if (!booking.signToken || token !== booking.signToken) { json(res, 404, { error: 'Not found' }); return; }
+  if (!booking.licenseFileId || !isSafePathSegment(booking.licenseFileId)) {
+    json(res, 404, { error: 'No license on file yet' });
+    return;
+  }
+  const filePath = path.join(UPLOAD_DIR, bookingId, booking.licenseFileId);
+  if (!fs.existsSync(filePath)) { json(res, 404, { error: 'No license on file yet' }); return; }
+  try {
+    const data = fs.readFileSync(filePath);
+    const ext = path.extname(booking.licenseFileId).toLowerCase();
+    res.writeHead(200, {
+      'Content-Type': CONTENT_TYPE_BY_EXT[ext] || 'application/octet-stream',
+      'Content-Length': data.length,
+      'Cache-Control': 'private, no-store',
+    });
+    res.end(data);
+  } catch (err: any) {
+    console.error(`[license-view] Read error for ${bookingId}: ${err.message}`);
+    json(res, 500, { error: 'Could not read license' });
+  }
 }
 
 async function handleUploadInspection(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -1878,6 +1926,19 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       const id = url.split('/license/')[1]?.split('?')[0] || '';
       handleLicensePage(res, id);
       return;
+    }
+
+    // GET /api/license/:bookingId?t=<signToken> — owner-only license photo view.
+    // Gated on the booking's per-booking sign_token (unguessable; no new secret).
+    // Streams the stored image so the owner can review it from the email link.
+    if (req.method === 'GET' && url.startsWith('/api/license/')) {
+      const rest = url.split('/api/license/')[1] || '';
+      const [licBookingId, licQs] = rest.split('?');
+      const token = new URLSearchParams(licQs || '').get('t') || '';
+      if (licBookingId) {
+        handleGetLicense(res, licBookingId, token);
+        return;
+      }
     }
 
     // ── Rental Agreement endpoints ────────────────────────────────────

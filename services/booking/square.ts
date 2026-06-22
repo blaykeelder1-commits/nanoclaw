@@ -70,8 +70,12 @@ export async function createPaymentLink(
   const { lineItems, discounts } = buildSquareLineItems(pricing);
   const idempotencyKey = `sheridan-${bookingId}`;
 
+  // Must point at the page that actually renders the post-payment finish flow
+  // (license upload + e-sign buttons + conversion tracking) — that lives in
+  // form.html, served at /form. The legacy /widget/confirmation.html has no
+  // upload/sign UI, which silently dead-ended paid customers.
   const redirectUrl = process.env.BOOKING_CONFIRMATION_URL
-    || 'https://sheridantrailerrentals.us/booking-confirmation';
+    || 'https://sheridantrailerrentals.us/form';
 
   const body: any = {
     idempotency_key: idempotencyKey,

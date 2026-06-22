@@ -171,6 +171,13 @@
   <script>
     (function() {
       var params = new URLSearchParams(window.location.search);
+      // This legacy page has no license-upload / e-sign UI. The maintained
+      // post-payment finish flow lives at /form. Forward there so any old
+      // links (SMS/email already sent, Square idempotent links) still work.
+      if (params.get('booking')) {
+        window.location.replace('https://sheridantrailerrentals.us/form' + window.location.search);
+        return;
+      }
       var bookingId = params.get('booking');
 
       if (!bookingId) {

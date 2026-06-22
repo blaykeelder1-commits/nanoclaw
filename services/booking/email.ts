@@ -268,26 +268,31 @@ function agreementLinkRow(booking: Booking): string {
 function finishBookingSection(booking: Booking): string {
   const base = process.env.BOOKING_PUBLIC_BASE_URL || 'https://chat.sheridantrailerrentals.us';
 
-  // Already signed — link the completed agreement for their records.
-  if (booking.agreementId) {
-    const url = `${base}/api/agreements/${booking.agreementId}`;
-    return `
-    <p style="font-size: 13px; color: #4b5563; margin-top: 14px; padding-top: 14px; border-top: 1px solid #e5e7eb;">
-      <strong>Signed rental agreement:</strong> <a href="${url}" style="color: #0e7490;">${url}</a>
-    </p>`;
-  }
-
-  // Not signed yet — show the steps still needed to release the lock code.
+  // License and signature are INDEPENDENT requirements. Build the outstanding
+  // steps regardless of agreement state — a customer who signed but hasn't
+  // uploaded their license must still see the license-upload link (and vice
+  // versa). Previously this short-circuited on agreementId and silently
+  // dropped the license-upload link for signed-but-no-license customers.
   const items: string[] = [];
   if (!booking.licenseFileId) {
     const licenseUrl = `${base}/license/${booking.id}`;
     items.push(`<li style="margin-bottom: 12px;">📷 <strong>Upload your driver&rsquo;s license</strong><br><a href="${licenseUrl}" style="color: #1d4ed8; word-break: break-all;">${licenseUrl}</a></li>`);
   }
-  if (booking.signToken) {
+  if (!booking.agreementId && booking.signToken) {
     const signUrl = `${base}/sign/${booking.id}/${booking.signToken}`;
     items.push(`<li style="margin-bottom: 0;">✍️ <strong>Sign your rental agreement</strong><br><a href="${signUrl}" style="color: #1d4ed8; word-break: break-all;">${signUrl}</a></li>`);
   }
-  if (items.length === 0) return '';
+
+  // Once signed, include the completed-agreement link for the customer's records.
+  const signedLink = booking.agreementId
+    ? `
+    <p style="font-size: 13px; color: #4b5563; margin-top: 14px; padding-top: 14px; border-top: 1px solid #e5e7eb;">
+      <strong>Signed rental agreement:</strong> <a href="${base}/api/agreements/${booking.agreementId}" style="color: #0e7490;">${base}/api/agreements/${booking.agreementId}</a>
+    </p>`
+    : '';
+
+  // Nothing outstanding — just the signed-agreement link (or nothing).
+  if (items.length === 0) return signedLink;
 
   return `
     <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 16px; margin: 16px 0;">
@@ -296,7 +301,7 @@ function finishBookingSection(booking: Booking): string {
       <ul style="margin: 0; padding-left: 0; font-size: 14px; color: #374151; line-height: 1.5; list-style: none;">
         ${items.join('\n        ')}
       </ul>
-    </div>`;
+    </div>${signedLink}`;
 }
 
 // ── Payment Received Notification (to owner) ────────────────────────
@@ -319,6 +324,38 @@ export async function sendPaymentReceivedNotification(booking: Booking): Promise
           ${booking.balance > 0 ? `<p>Balance remaining: $${booking.balance.toFixed(2)} (due before pickup)</p>` : '<p>Fully paid — no balance remaining.</p>'}
           <p>Calendar event created. Customer confirmation email sent.</p>
           <p style="color: #9ca3af; font-size: 13px; margin-top: 16px;">Booking ID: ${booking.id}</p>
+        </div>
+      </div>
+    `,
+  });
+}
+
+// ── License Received Notification (to owner) ────────────────────────
+
+/**
+ * Sent the moment a customer uploads their license photo. Gives the owner a
+ * direct, token-protected link to view it (the photo doesn't exist at
+ * payment-time owner-notify, so this is the right moment to surface it).
+ */
+export async function sendLicenseReceivedNotification(booking: Booking, viewUrl: string): Promise<void> {
+  const t = getTransporter();
+
+  await sendWithRetry(t, {
+    from: getFrom(),
+    to: getOwnerEmail(),
+    subject: `License uploaded: ${booking.equipmentLabel} — ${booking.customer.firstName} ${booking.customer.lastName}`,
+    html: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: #1d4ed8; color: white; padding: 16px 24px; border-radius: 8px 8px 0 0;">
+          <h2 style="margin: 0;">📷 Driver's License Uploaded</h2>
+        </div>
+        <div style="background: #f9fafb; padding: 20px 24px; border: 1px solid #e5e7eb; border-top: none; font-size: 14px; color: #4b5563;">
+          <p><strong>${booking.customer.firstName} ${booking.customer.lastName}</strong> uploaded their license for <strong>${booking.equipmentLabel}</strong>.</p>
+          <p>Dates: ${booking.dates[0]} to ${booking.dates[booking.dates.length - 1]}</p>
+          <p style="margin: 20px 0;">
+            <a href="${viewUrl}" style="background: #1d4ed8; color: #fff; text-decoration: none; padding: 12px 20px; border-radius: 6px; font-weight: 600; display: inline-block;">View License Photo</a>
+          </p>
+          <p style="font-size: 12px; color: #9ca3af;">This link is private to this booking. Booking ID: ${booking.id}</p>
         </div>
       </div>
     `,
