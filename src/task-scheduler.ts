@@ -17,6 +17,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { runCliAgent } from './cli-runner.js';
+import { isCliAuthGateOpen, recordCliAuthFailure, recordCliSuccess } from './cli-auth-gate.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -147,6 +148,19 @@ async function runTask(
   const useCliMode =
     CLI_ENABLED && task.execution_mode !== 'container';
 
+  // CLI-auth gate: if auth is known-dead, do NOT spawn — that's the silent
+  // failure storm we're preventing. Skip without logging an error run or bumping
+  // failures; the task fires again on schedule and the health probe auto-closes
+  // the gate within ~5 min of re-auth. (When fallback is enabled, fall through to
+  // the container path, which uses separate API-credit auth.)
+  if (useCliMode && isCliAuthGateOpen() && !CLI_FALLBACK_ENABLED) {
+    logger.warn(
+      { taskId: task.id, group: task.group_folder },
+      'CLI-auth gate open — skipping scheduled CLI task until re-auth',
+    );
+    return;
+  }
+
   if (useCliMode) {
     // --- CLI path: run via host Claude Code (Max subscription, no API cost) ---
     logger.info(
@@ -170,8 +184,10 @@ async function runTask(
 
       if (cliOutput.status === 'error') {
         error = cliOutput.error || 'Unknown CLI error';
+        // Feed the CLI-auth breaker so a credential outage opens the gate + pages once.
+        if (cliOutput.authFailure) recordCliAuthFailure(`task:${task.id}`);
         logger.warn(
-          { taskId: task.id, error },
+          { taskId: task.id, error, authFailure: cliOutput.authFailure },
           'CLI agent failed',
         );
 
@@ -194,15 +210,16 @@ async function runTask(
             'CLI failed and CLI_FALLBACK_ENABLED=false — task SKIPPED to prevent credit burn. Fix CLI setup or set CLI_FALLBACK_ENABLED=true.',
           );
         }
-      } else if (cliOutput.result) {
+      } else if (cliOutput.status === 'success') {
+        recordCliSuccess(); // authenticated run — closes the gate if it was open
         result = cliOutput.result;
         // Forward CLI result to user — unless the task chose to stay silent
         // (empty or sentinel-only). Suppressing here stops no-op sweep acks
         // from consuming the group's outbound rate budget.
-        if (isSilentResult(cliOutput.result)) {
-          logger.info({ taskId: task.id }, 'Scheduled task stayed silent — no message sent');
-        } else {
+        if (cliOutput.result && !isSilentResult(cliOutput.result)) {
           await deps.sendMessage(task.chat_jid, cliOutput.result);
+        } else {
+          logger.info({ taskId: task.id }, 'Scheduled task stayed silent — no message sent');
         }
       }
 

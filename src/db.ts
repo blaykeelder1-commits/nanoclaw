@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 
-import { ASSISTANT_NAME, DATA_DIR, STORE_DIR, TIMEZONE } from './config.js';
+import { ASSISTANT_NAME, DATA_DIR, DB_PATH, TIMEZONE } from './config.js';
 import {
   Campaign,
   Contact,
@@ -446,7 +446,7 @@ function createSchema(database: Database.Database): void {
 }
 
 export function initDatabase(): void {
-  const dbPath = path.join(STORE_DIR, 'messages.db');
+  const dbPath = DB_PATH;
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   db = new Database(dbPath);
@@ -462,6 +462,17 @@ export function initDatabase(): void {
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
   createSchema(db);
+}
+
+/**
+ * Write a consistent, WAL-safe snapshot of the live DB to `dest`. Uses
+ * `VACUUM INTO`, which captures committed WAL pages — unlike a raw copyFileSync
+ * of the .db file, which silently omits everything still in the -wal file.
+ */
+export function backupDatabaseToFile(dest: string): void {
+  if (!db) return;
+  try { fs.rmSync(dest, { force: true }); } catch { /* ignore */ }
+  db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
 }
 
 /**

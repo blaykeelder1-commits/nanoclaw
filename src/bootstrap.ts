@@ -6,7 +6,7 @@ import path from 'path';
 import {
   CLI_ENABLED,
   CLI_FALLBACK_ENABLED,
-  DATA_DIR,
+  DB_PATH,
   MAIN_GROUP_FOLDER,
   TIMEZONE,
 } from './config.js';
@@ -23,7 +23,8 @@ import {
   storeMessage,
 } from './db.js';
 import { CronExpressionParser } from 'cron-parser';
-import { startHealthMonitor } from './health.js';
+import { startHealthMonitor, sendPushAlert } from './health.js';
+import { setCliAuthGateAlerter } from './cli-auth-gate.js';
 import { startHealthServer } from './health-endpoint.js';
 import { startDashboard } from './dashboard.js';
 import { startIpcWatcher } from './ipc.js';
@@ -559,15 +560,29 @@ export function startServices(queue: GroupQueue, whatsapp: WhatsAppChannel): voi
   startDashboard(dashboardPort);
   logger.info({ port: dashboardPort }, 'Dashboard started');
 
+  const mainGroupJid = (): string | null => {
+    for (const [jid, group] of Object.entries(getRegisteredGroups())) {
+      if (group.folder === MAIN_GROUP_FOLDER) return jid;
+    }
+    return null;
+  };
+
+  // Wire the CLI-auth breaker's pager: WhatsApp main (works during a Claude-auth
+  // outage — WhatsApp doesn't use Claude) + ntfy push as a backup channel.
+  setCliAuthGateAlerter((message) => {
+    const jid = mainGroupJid();
+    if (jid) {
+      routeOutbound(jid, message).catch((err: unknown) =>
+        logger.warn({ err }, 'CLI-auth gate WhatsApp alert failed'),
+      );
+    }
+    sendPushAlert(message);
+  });
+
   startHealthMonitor({
     channels: getChannels(),
     sendAlert: (jid, text) => routeOutbound(jid, text),
-    getMainGroupJid: () => {
-      for (const [jid, group] of Object.entries(getRegisteredGroups())) {
-        if (group.folder === MAIN_GROUP_FOLDER) return jid;
-      }
-      return null;
-    },
+    getMainGroupJid: mainGroupJid,
   });
 
   startSchedulerLoop({
@@ -596,13 +611,23 @@ export function startServices(queue: GroupQueue, whatsapp: WhatsAppChannel): voi
 
 export { initDatabase } from './db.js';
 
-/** Best-effort DB backup at startup — overwrites previous backup. */
+/**
+ * Best-effort DB backup at startup — overwrites previous backup. Runs BEFORE the
+ * DB handle is opened, so it's a raw file copy of the real DB (store/messages.db,
+ * via DB_PATH). The previous instance checkpointed WAL on clean shutdown; the
+ * daily in-process backup (health.ts) is the WAL-safe VACUUM INTO snapshot.
+ * (Previously targeted DATA_DIR/data.db — a 0-byte stray — so startup "backups"
+ * silently backed up nothing.)
+ */
 export function backupDatabase(): void {
-  const dbPath = path.join(DATA_DIR, 'data.db');
-  const backupPath = dbPath + '.backup';
+  const dbPath = DB_PATH;
+  const backupPath = dbPath + '.startup-backup';
   try {
     if (!fs.existsSync(dbPath)) return;
     fs.copyFileSync(dbPath, backupPath);
+    // Include the WAL if present so the startup copy is restorable.
+    const wal = dbPath + '-wal';
+    if (fs.existsSync(wal)) fs.copyFileSync(wal, backupPath + '-wal');
     const sizeMb = (fs.statSync(backupPath).size / (1024 ** 2)).toFixed(1);
     logger.info({ backupPath, sizeMb }, 'Database backed up at startup');
   } catch (err) {

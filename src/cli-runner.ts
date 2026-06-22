@@ -190,6 +190,11 @@ const SECRETS_DEPLOY = [
   'CLOUDFLARE_API_TOKEN',
   'CLOUDFLARE_ACCOUNT_ID',
 ] as const;
+// SGS platform access. Used by tools/web/ship-sgs.ts to read/close change requests.
+const SECRETS_SGS = [
+  'ANDY_SERVICE_TOKEN',
+  'SGS_BASE_URL',
+] as const;
 
 const ALL_SECRET_KEYS = [
   ...SECRETS_CORE,
@@ -200,6 +205,7 @@ const ALL_SECRET_KEYS = [
   ...SECRETS_IDDI,
   ...SECRETS_SQUARE,
   ...SECRETS_DEPLOY,
+  ...SECRETS_SGS,
 ] as const;
 
 const STANDARD_SECRET_KEYS = [
@@ -214,6 +220,8 @@ const SCOPE_MAP: Record<string, readonly string[]> = {
   iddi: SECRETS_IDDI,
   leads: SECRETS_LEADS,
   deploy: SECRETS_DEPLOY,
+  // 'sgs' scope: ship-site deploy creds + SGS platform creds (the fulfillment loop needs both).
+  sgs: [...SECRETS_DEPLOY, ...SECRETS_SGS],
 };
 
 function readSecrets(
@@ -258,6 +266,119 @@ export interface CliOutput {
   status: 'success' | 'error';
   result: string | null;
   error?: string;
+  /** True when the failure is an authentication/401 error (drives the CLI-auth breaker). */
+  authFailure?: boolean;
+}
+
+/**
+ * Matches Claude CLI authentication failures. The CLI in `--output-format json`
+ * reports these on STDOUT inside the result envelope (e.g. is_error:true,
+ * result:"Failed to authenticate. API Error: 401 …authentication_error…"),
+ * NOT on stderr — which is why the old `stderr.slice(-200)` error was always empty.
+ */
+const AUTH_FAILURE_PATTERN =
+  /\b401\b|authentication_error|invalid authentication credentials|unauthorized|oauth token (?:expired|revoked)|invalid_grant/i;
+
+export interface ParsedCliOutcome {
+  resultText: string | null;
+  newSessionId?: string;
+  failed: boolean;
+  error: string | null;
+  authFailure: boolean;
+}
+
+/** Pull the result text + is_error flag out of the CLI's JSON envelope (array of blocks, object, or string). */
+function extractResultBlock(output: unknown): { text: string | null; isError: boolean; sessionId?: string } {
+  if (Array.isArray(output)) {
+    let sessionId: string | undefined;
+    const initBlock = output.find(
+      (b: { type?: string; subtype?: string }) => b?.type === 'system' && b?.subtype === 'init',
+    );
+    if (initBlock && 'session_id' in initBlock) sessionId = (initBlock as { session_id: string }).session_id;
+
+    const resultBlock = [...output].reverse().find((b: { type?: string }) => b?.type === 'result') as
+      | { result?: string; is_error?: boolean }
+      | undefined;
+    if (resultBlock) {
+      const text = typeof resultBlock.result === 'string' ? resultBlock.result : null;
+      return { text, isError: !!resultBlock.is_error, sessionId };
+    }
+    const text =
+      output
+        .filter((b: { type?: string }) => b?.type === 'text')
+        .map((b: { text?: string }) => b?.text)
+        .join('\n')
+        .trim() || null;
+    return { text, isError: false, sessionId };
+  }
+  if (output && typeof output === 'object') {
+    const o = output as { result?: string; is_error?: boolean; session_id?: string };
+    if (typeof o.result === 'string') return { text: o.result, isError: !!o.is_error, sessionId: o.session_id };
+  }
+  if (typeof output === 'string') return { text: output, isError: false };
+  return { text: null, isError: false };
+}
+
+/**
+ * Deterministically classify a finished CLI run. Reads BOTH the exit code and the
+ * stdout JSON envelope so the real failure (which the CLI emits on stdout) is never
+ * lost. A run is failed when it timed out, exited non-zero, emitted no output, or
+ * carried `is_error:true` — even when the exit code is 0 (so an error payload is
+ * never delivered to a customer as a "successful" reply).
+ */
+export function parseCliOutcome(
+  stdout: string,
+  stderr: string,
+  code: number | null,
+  timedOut: boolean,
+): ParsedCliOutcome {
+  if (timedOut) {
+    return { resultText: null, failed: true, error: `CLI agent timed out after ${CLI_TIMEOUT}ms`, authFailure: false };
+  }
+
+  const raw = stdout.trim();
+
+  // No stdout at all — the CLI crashed before emitting its JSON envelope.
+  if (!raw) {
+    const detail = stderr.trim().slice(-500);
+    const authFailure = AUTH_FAILURE_PATTERN.test(detail);
+    const prefix = authFailure ? 'AUTH_401' : 'CLI produced no output';
+    return {
+      resultText: null,
+      failed: true,
+      error: detail ? `${prefix}: ${detail}` : `${prefix}${code !== null ? ` (exit ${code})` : ''}`,
+      authFailure,
+    };
+  }
+
+  let parsed: { text: string | null; isError: boolean; sessionId?: string };
+  try {
+    parsed = extractResultBlock(JSON.parse(raw));
+  } catch {
+    // Non-JSON stdout — legacy raw text path. Success unless the exit code says otherwise.
+    parsed = { text: raw, isError: false };
+  }
+
+  const failed = code !== 0 || parsed.isError;
+  if (!failed) {
+    return { resultText: parsed.text, newSessionId: parsed.sessionId, failed: false, error: null, authFailure: false };
+  }
+
+  // Build the best-available error: prefer the CLI's own result text (where 401 lives),
+  // then stderr, then the raw stdout. Never an empty "exited with code N: ".
+  const detail =
+    (parsed.isError && parsed.text) ? parsed.text
+    : stderr.trim() ? stderr.slice(-500)
+    : (parsed.text || raw).slice(-500);
+  const authFailure = AUTH_FAILURE_PATTERN.test(detail);
+  const prefix = authFailure ? 'AUTH_401' : `CLI exited with code ${code}`;
+  return {
+    resultText: null,
+    newSessionId: parsed.sessionId,
+    failed: true,
+    error: detail ? `${prefix}: ${detail}` : `${prefix}: unknown error`,
+    authFailure,
+  };
 }
 
 // Tools allowed for CLI runs (full tool access for scheduled tasks)
@@ -548,87 +669,25 @@ export async function runCliAgent(
       }
       fs.writeFileSync(logFile, logLines.join('\n'));
 
-      if (timedOut) {
-        resolve({
-          status: 'error',
-          result: null,
-          error: `CLI agent timed out after ${CLI_TIMEOUT}ms`,
-        });
-        return;
-      }
+      // Deterministically classify the run from BOTH exit code and stdout JSON.
+      // The CLI emits its real error (incl. 401 auth) on stdout, not stderr.
+      const outcome = parseCliOutcome(stdout, stderr, code, timedOut);
 
-      if (code !== 0) {
+      if (outcome.failed) {
         logger.error(
-          { group: input.groupFolder, code, duration },
+          { group: input.groupFolder, code, duration, authFailure: outcome.authFailure, error: outcome.error },
           'CLI agent exited with error',
         );
-        resolve({
-          status: 'error',
-          result: null,
-          error: `CLI agent exited with code ${code}: ${stderr.slice(-200)}`,
-        });
+        if (outcome.authFailure) audit('cli_auth_failure', { group: input.groupFolder, error: outcome.error });
+        resolve({ status: 'error', result: null, error: outcome.error ?? 'unknown error', authFailure: outcome.authFailure });
         return;
       }
 
-      // Parse JSON output from claude --output-format json
-      // The CLI returns an array of content blocks:
-      // [{"type":"text","text":"..."}, {"type":"result","result":"final answer","subtype":"text"}]
-      try {
-        const output = JSON.parse(stdout);
-        let resultText: string | null = null;
-
-        if (Array.isArray(output)) {
-          // Find the last block with type === 'result'
-          const resultBlock = [...output].reverse().find(
-            (b: { type?: string }) => b.type === 'result',
-          );
-          if (resultBlock?.result) {
-            resultText = resultBlock.result;
-          } else {
-            // Fallback: concatenate all text blocks
-            resultText = output
-              .filter((b: { type?: string }) => b.type === 'text')
-              .map((b: { text?: string }) => b.text)
-              .join('\n')
-              .trim() || null;
-          }
-        } else if (typeof output === 'object' && output.result) {
-          resultText = output.result;
-        } else if (typeof output === 'string') {
-          resultText = output;
-        }
-
-        logger.info(
-          { group: input.groupFolder, duration, hasResult: !!resultText },
-          'CLI agent completed',
-        );
-
-        resolve({
-          status: 'success',
-          result: resultText,
-        });
-      } catch (err) {
-        // JSON parsing failed — likely a crash or partial output
-        const raw = stdout.trim();
-        if (raw) {
-          logger.warn(
-            { group: input.groupFolder, error: err },
-            'Failed to parse CLI JSON output, using raw stdout',
-          );
-          resolve({ status: 'success', result: raw });
-        } else {
-          // Empty stdout + unparseable = the CLI crashed or produced nothing
-          logger.error(
-            { group: input.groupFolder, error: err, stderrTail: stderr.slice(-200) },
-            'CLI produced no parseable output — treating as error',
-          );
-          resolve({
-            status: 'error',
-            result: null,
-            error: `CLI produced no output: ${stderr.slice(-200) || 'unknown error'}`,
-          });
-        }
-      }
+      logger.info(
+        { group: input.groupFolder, duration, hasResult: !!outcome.resultText },
+        'CLI agent completed',
+      );
+      resolve({ status: 'success', result: outcome.resultText });
     });
 
     proc.on('error', (err) => {
@@ -661,6 +720,8 @@ export interface CliInteractiveOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  /** True when the failure is an authentication/401 error (drives the CLI-auth breaker). */
+  authFailure?: boolean;
 }
 
 /**
@@ -867,61 +928,24 @@ export async function runCliInteractive(
       }
       fs.writeFileSync(logFile, logLines.join('\n'));
 
-      if (timedOut) {
-        resolve({ status: 'error', result: null, error: `CLI interactive timed out after ${CLI_TIMEOUT}ms` });
-        return;
-      }
+      // Deterministically classify from BOTH exit code and stdout JSON (incl. is_error + 401 auth).
+      const outcome = parseCliOutcome(stdout, stderr, code, timedOut);
 
-      if (code !== 0) {
-        logger.error({ group: input.groupFolder, code, duration, mode: 'interactive' }, 'Interactive CLI exited with error');
-        resolve({ status: 'error', result: null, error: `CLI exited with code ${code}: ${stderr.slice(-200)}` });
-        return;
-      }
-
-      // Parse output — extract result and session ID
-      try {
-        const output = JSON.parse(stdout);
-        let resultText: string | null = null;
-        let newSessionId: string | undefined;
-
-        if (Array.isArray(output)) {
-          // Extract session ID from init message if present
-          const initBlock = output.find((b: { type?: string }) => b.type === 'system' && (b as { subtype?: string }).subtype === 'init');
-          if (initBlock && 'session_id' in initBlock) {
-            newSessionId = (initBlock as { session_id: string }).session_id;
-          }
-
-          const resultBlock = [...output].reverse().find((b: { type?: string }) => b.type === 'result');
-          if (resultBlock?.result) {
-            resultText = resultBlock.result;
-          } else {
-            resultText = output
-              .filter((b: { type?: string }) => b.type === 'text')
-              .map((b: { text?: string }) => b.text)
-              .join('\n')
-              .trim() || null;
-          }
-        } else if (typeof output === 'object' && output.result) {
-          resultText = output.result;
-          newSessionId = output.session_id;
-        }
-
-        logger.info(
-          { group: input.groupFolder, duration, hasResult: !!resultText, newSessionId, mode: 'interactive' },
-          'Interactive CLI completed',
+      if (outcome.failed) {
+        logger.error(
+          { group: input.groupFolder, code, duration, mode: 'interactive', authFailure: outcome.authFailure, error: outcome.error },
+          'Interactive CLI exited with error',
         );
-
-        resolve({ status: 'success', result: resultText, newSessionId });
-      } catch (err) {
-        const raw = stdout.trim();
-        if (raw) {
-          logger.warn({ group: input.groupFolder, error: err, mode: 'interactive' }, 'Failed to parse interactive CLI output, using raw');
-          resolve({ status: 'success', result: raw });
-        } else {
-          logger.error({ group: input.groupFolder, error: err, mode: 'interactive' }, 'Interactive CLI produced no output');
-          resolve({ status: 'error', result: null, error: `CLI produced no output: ${stderr.slice(-200) || 'unknown error'}` });
-        }
+        if (outcome.authFailure) audit('cli_auth_failure', { group: input.groupFolder, mode: 'interactive', error: outcome.error });
+        resolve({ status: 'error', result: null, error: outcome.error ?? 'unknown error', authFailure: outcome.authFailure });
+        return;
       }
+
+      logger.info(
+        { group: input.groupFolder, duration, hasResult: !!outcome.resultText, newSessionId: outcome.newSessionId, mode: 'interactive' },
+        'Interactive CLI completed',
+      );
+      resolve({ status: 'success', result: outcome.resultText, newSessionId: outcome.newSessionId });
     });
 
     proc.on('error', (err) => {

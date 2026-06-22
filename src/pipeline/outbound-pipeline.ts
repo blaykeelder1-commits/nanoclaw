@@ -15,6 +15,15 @@ export class OutboundPipeline {
 
   /** Returns the final text to send, or null if suppressed. */
   process(msg: OutboundMessage): string | null {
+    return this.processDetailed(msg).text;
+  }
+
+  /**
+   * Like process(), but reports WHICH stage suppressed the message. Callers use
+   * this to distinguish an intentional drop (dedup/error-suppressor) from a
+   * genuine loss (rate-limit) that should be dead-lettered, not silently dropped.
+   */
+  processDetailed(msg: OutboundMessage): { text: string | null; rejectedBy?: string; reason?: string } {
     let text = msg.text;
 
     for (const stage of this.stages) {
@@ -24,13 +33,13 @@ export class OutboundPipeline {
           { stage: stage.name, jid: msg.chatJid, reason: verdict.reason },
           'Outbound message rejected by pipeline',
         );
-        return null;
+        return { text: null, rejectedBy: stage.name, reason: verdict.reason };
       }
       if (verdict.action === 'transform') {
         text = verdict.text;
       }
     }
 
-    return text;
+    return { text };
   }
 }

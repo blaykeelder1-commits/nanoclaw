@@ -7,6 +7,7 @@ import { CronExpressionParser } from 'cron-parser';
 import {
   CLI_ENABLED,
   DATA_DIR,
+  DB_PATH,
   GROUPS_DIR,
   HEALTH_CHECK_INTERVAL,
   MAIN_GROUP_FOLDER,
@@ -16,8 +17,10 @@ import {
   BOOKING_HEALTH_URL,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
+import { recordCliAuthFailure, recordCliSuccess } from './cli-auth-gate.js';
 import { expirePendingBookings } from './square-payments.js';
 import {
+  backupDatabaseToFile,
   getDailySpendUsd,
   getDigestStats,
   getDueTasks,
@@ -90,11 +93,53 @@ export function resetInteractiveCliFailures(): void {
   interactiveCliFailures = 0;
 }
 
-type CliProbeResult = 'ok' | 'binary_broken' | 'token_expired' | 'token_missing';
+type CliProbeResult = 'ok' | 'binary_broken' | 'token_expired' | 'token_missing' | 'unreachable';
+
+/**
+ * Make a REAL authenticated 1-token call and report whether auth actually works.
+ * The old probe only ran `claude --version` (no auth) + checked the creds-file
+ * timestamp — so a revoked/refresh-failed token read "ok" while every real run
+ * got 401. This is the deterministic recovery signal for the CLI-auth gate.
+ */
+function authPing(): Promise<'ok' | 'auth_failed' | 'unreachable'> {
+  return new Promise((resolve) => {
+    const env = { ...process.env };
+    delete env.ANTHROPIC_API_KEY;
+    delete env.CLAUDE_CODE_OAUTH_TOKEN;
+
+    const proc = spawn('claude', ['-p', 'ping', '--max-turns', '1', '--output-format', 'json'], {
+      env,
+      timeout: 30000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    proc.stdin?.end();
+    proc.stdout?.on('data', (d: Buffer) => { stdout += d; });
+    proc.stderr?.on('data', (d: Buffer) => { stderr += d; });
+    proc.on('close', () => {
+      const blob = `${stdout} ${stderr}`;
+      // The CLI reports auth failures on stdout inside its JSON envelope.
+      if (/\b401\b|authentication_error|invalid authentication credentials|unauthorized|invalid_grant/i.test(blob)) {
+        resolve('auth_failed');
+        return;
+      }
+      if (/"is_error"\s*:\s*false/.test(stdout) || /\bpong\b/i.test(stdout)) {
+        resolve('ok');
+        return;
+      }
+      // Non-auth failure (network, rate, transient) — don't flip the gate on this.
+      logger.debug({ stdoutTail: stdout.slice(-200), stderrTail: stderr.slice(-200) }, 'authPing inconclusive');
+      resolve('unreachable');
+    });
+    proc.on('error', () => resolve('unreachable'));
+  });
+}
 
 /**
  * Probe CLI health: (1) binary exists via `claude --version`, (2) OAuth credentials
- * file exists and token hasn't expired. This is free and instant — no API calls.
+ * file present, (3) a REAL authenticated ping succeeds. Steps 1-2 are free; step 3
+ * costs ~1 token but is the only way to detect a revoked/refresh-failed token.
  */
 function probeCli(): Promise<CliProbeResult> {
   return new Promise((resolve) => {
@@ -106,33 +151,38 @@ function probeCli(): Promise<CliProbeResult> {
     const proc = spawn('claude', ['--version'], { env, timeout: 15000 });
     let stdout = '';
     proc.stdout?.on('data', (d: Buffer) => { stdout += d; });
-    proc.on('close', (code) => {
+    proc.on('close', async (code) => {
       if (code !== 0 || !stdout.trim()) {
         logger.warn('CLI probe: binary check failed');
         resolve('binary_broken');
         return;
       }
 
-      // Step 2: verify OAuth credentials exist and aren't expired
+      // Step 2: verify OAuth credentials file exists with an access token
       const home = process.env.HOME || require('os').homedir();
       const credsPath = path.join(home, '.claude', '.credentials.json');
       try {
         const creds = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
-        const oauth = creds.claudeAiOauth;
-        if (!oauth?.accessToken) {
+        if (!creds.claudeAiOauth?.accessToken) {
           logger.warn('CLI probe: no accessToken in credentials');
           resolve('token_missing');
           return;
         }
-        if (oauth.expiresAt && oauth.expiresAt < Date.now()) {
-          logger.warn({ expiresAt: new Date(oauth.expiresAt).toISOString() }, 'CLI probe: OAuth token expired');
-          resolve('token_expired');
-          return;
-        }
-        resolve('ok');
       } catch (err) {
         logger.warn({ err }, 'CLI probe: failed to read credentials file');
         resolve('token_missing');
+        return;
+      }
+
+      // Step 3: REAL authenticated ping — the only check that catches a live 401.
+      const ping = await authPing();
+      if (ping === 'auth_failed') {
+        logger.warn('CLI probe: authenticated ping returned 401');
+        resolve('token_expired');
+      } else if (ping === 'ok') {
+        resolve('ok');
+      } else {
+        resolve('unreachable'); // transient — do not treat as auth death
       }
     });
     proc.on('error', () => resolve('binary_broken'));
@@ -206,7 +256,7 @@ let lastTokenAlertAt = 0;
  * Works even when WhatsApp is disconnected or the process is degraded.
  * Configure topic via NANOCLAW_ALERT_TOPIC env var (default: nanoclaw-alerts).
  */
-function sendPushAlert(message: string): void {
+export function sendPushAlert(message: string): void {
   const topic = process.env.NANOCLAW_ALERT_TOPIC || 'nanoclaw-alerts';
   const url = `https://ntfy.sh/${topic}`;
   fetch(url, {
@@ -373,7 +423,7 @@ async function runHealthCheck(deps: HealthMonitorDeps): Promise<void> {
 
   // Check 7: Database size
   try {
-    const dbPath = path.join(DATA_DIR, 'data.db');
+    const dbPath = DB_PATH;
     if (fs.existsSync(dbPath)) {
       const dbSizeMb = fs.statSync(dbPath).size / (1024 ** 2);
       if (dbSizeMb > 1024) {
@@ -453,9 +503,19 @@ async function runHealthCheck(deps: HealthMonitorDeps): Promise<void> {
 
       if (probeResult === 'ok') {
         cliProbeFailures = 0;
+        // Authenticated ping succeeded — this is the recovery signal that
+        // auto-closes the CLI-auth gate (and pings "recovered" once).
+        recordCliSuccess();
+      } else if (probeResult === 'unreachable') {
+        // Transient (network/rate) — don't escalate or touch the auth gate.
+        logger.debug('CLI health probe inconclusive (transient) — not counting as failure');
       } else {
         cliProbeFailures++;
         logger.warn({ consecutiveFailures: cliProbeFailures, reason: probeResult }, 'CLI health probe failed');
+        // A real auth failure feeds the breaker so the gate opens + pages once.
+        if (probeResult === 'token_expired' || probeResult === 'token_missing') {
+          recordCliAuthFailure('health-probe');
+        }
       }
 
       // Also factor in interactive failures (real customer messages that failed)
@@ -765,15 +825,13 @@ export function startHealthMonitor(deps: HealthMonitorDeps): void {
       logger.error({ err }, 'Failed to clean container logs');
     }
 
-    // Daily database backup (overwrites previous — keeps latest)
+    // Daily database backup (overwrites previous — keeps latest). WAL-safe via
+    // VACUUM INTO so the snapshot includes committed pages still in the -wal file.
     try {
-      const dbPath = path.join(DATA_DIR, 'data.db');
-      const backupPath = dbPath + '.backup';
-      if (fs.existsSync(dbPath)) {
-        fs.copyFileSync(dbPath, backupPath);
-        const sizeMb = (fs.statSync(backupPath).size / (1024 ** 2)).toFixed(1);
-        logger.info({ backupPath, sizeMb }, 'Daily database backup completed');
-      }
+      const backupPath = DB_PATH + '.backup';
+      backupDatabaseToFile(backupPath);
+      const sizeMb = (fs.statSync(backupPath).size / (1024 ** 2)).toFixed(1);
+      logger.info({ backupPath, sizeMb }, 'Daily database backup completed');
     } catch (err) {
       logger.error({ err }, 'Daily database backup failed');
     }

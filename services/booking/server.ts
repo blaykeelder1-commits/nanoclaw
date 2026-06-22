@@ -1,7 +1,8 @@
 /**
  * Sheridan Rentals Booking API Server
  *
- * Lightweight HTTP server on port 3200 (no Express).
+ * Lightweight HTTP server (no Express). Listens on BOOKING_PORT (3201 in prod;
+ * Caddy routes all /api/booking traffic here). Port 3200 is the web-chat channel.
  * Endpoints:
  *   POST /api/availability      — Check booked date ranges from Google Calendar
  *   POST /api/checkout          — Validate, price, create Square payment link, store booking
@@ -60,6 +61,20 @@ import type {
 const inFlightOwnerNotify = new Set<string>();
 
 /**
+ * Backup alert over ntfy.sh — an independent channel so a PAID booking is never
+ * invisible when the owner-notification email fails. Same topic the NanoClaw
+ * health monitor uses, so it lands in Blayke's existing alerts feed.
+ */
+function pushAlert(message: string): void {
+  const topic = process.env.NANOCLAW_ALERT_TOPIC || 'nanoclaw-alerts';
+  fetch(`https://ntfy.sh/${topic}`, {
+    method: 'POST',
+    body: message,
+    headers: { Title: 'Sheridan Booking Alert', Priority: '5' },
+  }).catch((err) => console.error(`[pushAlert] ntfy failed: ${err?.message || err}`));
+}
+
+/**
  * Send the owner notification for a booking exactly once at a time.
  * Stamps owner_notified_at on success. On send failure, leaves the row
  * unstamped so the watchdog can retry on the next tick. On stamp failure
@@ -78,10 +93,13 @@ async function notifyOwnerOnce(booking: Booking, source: 'webhook' | 'watchdog')
       // Email succeeded; DB stamp failed. Logging here is critical — otherwise
       // the watchdog will resend every minute creating duplicate emails.
       console.error(`[${source}] CRITICAL: markOwnerNotified failed for ${booking.id} after successful send: ${e.message}. Manually run UPDATE bookings SET owner_notified_at=datetime('now') WHERE id='${booking.id}' to silence watchdog.`);
+      pushAlert(`⚠️ Booking ${booking.id}: owner email SENT but DB stamp failed — watchdog may resend. ${e.message}`);
     }
   } catch (err: any) {
     const amountPaid = (booking.subtotal + booking.deposit - booking.balance).toFixed(2);
     console.error(`[${source}] CRITICAL: Owner notification email failed for ${booking.id}: ${err.message}. Customer: ${booking.customer.firstName} ${booking.customer.lastName} ${booking.customer.phone} ${booking.customer.email}. Paid $${amountPaid} for ${booking.equipmentLabel} on ${booking.dates.join(',')}. Watchdog will retry every 60s.`);
+    // Email is down — page over an independent channel so a PAID booking isn't invisible.
+    pushAlert(`🚨 PAID booking ${booking.id} — owner email FAILED. ${booking.customer.firstName} ${booking.customer.lastName} ${booking.customer.phone}, $${amountPaid} ${booking.equipmentLabel} ${booking.dates.join(',')}. Check booking dashboard.`);
   } finally {
     inFlightOwnerNotify.delete(booking.id);
   }

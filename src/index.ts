@@ -43,6 +43,7 @@ import {
   startServices,
 } from './bootstrap.js';
 import { recordInteractiveCliFailure, resetInteractiveCliFailures } from './health.js';
+import { isCliAuthGateOpen, recordCliAuthFailure, recordCliSuccess } from './cli-auth-gate.js';
 import {
   getRegisteredGroups,
   getSessions,
@@ -77,6 +78,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
     );
   });
 }
+
+// Honest, neutral holding line sent to a customer when the CLI path can't run
+// right now (auth gate open or CLI failure with no fallback). Never blames
+// credits/billing — per groups/global/CLAUDE.md, Andy always replies and never
+// uses a billing excuse. The real answer follows once auth recovers.
+const CLI_AUTH_HOLDING_MESSAGE =
+  "Thanks for your message! I'm catching up right now — I'll get right back to you shortly.";
 
 // ── State ──────────────────────────────────────────────────────────
 
@@ -237,6 +245,16 @@ async function runAgent(
 
   // --- CLI path: try host Claude Code first (Max subscription, no API cost) ---
   if (CLI_ENABLED) {
+    // CLI-auth gate: if auth is known-dead, don't spawn into a guaranteed 401.
+    // Send one honest, neutral holding line (never a credits/billing excuse) and
+    // return error. The health probe auto-closes the gate within ~5 min of re-auth.
+    if (isCliAuthGateOpen() && !CLI_FALLBACK_ENABLED) {
+      logger.warn({ group: group.name }, 'CLI-auth gate open — deferring interactive reply');
+      if (onOutput) {
+        await onOutput({ status: 'error', result: CLI_AUTH_HOLDING_MESSAGE });
+      }
+      return 'error';
+    }
     try {
       logger.info({ group: group.name, mode: 'cli-interactive' }, 'Trying CLI for interactive message');
 
@@ -262,26 +280,27 @@ async function runAgent(
       }
 
       if (cliOutput.status === 'error') {
-        logger.warn({ group: group.name, error: cliOutput.error }, 'Interactive CLI failed');
+        logger.warn({ group: group.name, error: cliOutput.error, authFailure: cliOutput.authFailure }, 'Interactive CLI failed');
         recordInteractiveCliFailure();
+        // Feed the CLI-auth breaker so a credential outage opens the gate + pages once.
+        if (cliOutput.authFailure) recordCliAuthFailure(`interactive:${group.folder}`);
 
         if (CLI_FALLBACK_ENABLED) {
           logger.warn({ group: group.name, event: 'cli_interactive_fallback' }, 'Falling back to container (API credits)');
           // Fall through to container path below
         } else {
-          // CLI failed and no fallback — notify user instead of silent failure
+          // CLI failed and no fallback — send an honest, neutral holding line
+          // (never a credits/billing excuse) instead of a silent failure.
           logger.error({ group: group.name, event: 'cli_interactive_no_fallback' }, 'CLI failed, no container fallback');
           if (onOutput) {
-            await onOutput({
-              status: 'error',
-              result: "Sorry, I ran into a technical issue and couldn't complete that. Please try again in a moment.",
-            });
+            await onOutput({ status: 'error', result: CLI_AUTH_HOLDING_MESSAGE });
           }
           return 'error';
         }
       } else {
-        // CLI succeeded — clear failure counter
+        // CLI succeeded — clear failure counters + close the auth gate if open
         resetInteractiveCliFailures();
+        recordCliSuccess();
         // Forward result if not already sent via send_message MCP tool
         if (cliOutput.result && onOutput) {
           await onOutput({
@@ -298,10 +317,7 @@ async function runAgent(
       if (!CLI_FALLBACK_ENABLED) {
         logger.error({ group: group.name }, 'CLI failed and CLI_FALLBACK_ENABLED=false');
         if (onOutput) {
-          await onOutput({
-            status: 'error',
-            result: "Sorry, I ran into a technical issue and couldn't complete that. Please try again in a moment.",
-          });
+          await onOutput({ status: 'error', result: CLI_AUTH_HOLDING_MESSAGE });
         }
         return 'error';
       }
@@ -489,6 +505,17 @@ async function main(): Promise<void> {
       groupJid,
       `Hey! I'm currently working on ${activeCount} other tasks. I'll get to your message as soon as one finishes — shouldn't be long!`,
     ).catch((err: unknown) => { logger.debug({ err }, 'Failed to notify about queued message'); });
+  });
+  queue.setOnDeadLetter((groupJid, retryCount) => {
+    const registeredGroups = getRegisteredGroups();
+    const group = registeredGroups[groupJid];
+    const mainJid = Object.entries(registeredGroups).find(([, g]) => g.folder === MAIN_GROUP_FOLDER)?.[0];
+    if (mainJid) {
+      routeOutbound(
+        mainJid,
+        `🚨 Message processing stalled in *${group?.name ?? groupJid}* after ${retryCount} retries. Messages are preserved and will retry on the next inbound, but Andy may need a look.`,
+      ).catch((err: unknown) => { logger.debug({ err }, 'Failed to send dead-letter alert'); });
+    }
   });
   recoverPendingMessages();
   startMessageLoop();

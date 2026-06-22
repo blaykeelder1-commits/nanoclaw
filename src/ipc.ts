@@ -21,6 +21,7 @@ import {
   updateTask,
 } from './db.js';
 import { logger } from './logger.js';
+import { sendPushAlert } from './health.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -219,9 +220,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   ([, g]) => g.folder === MAIN_GROUP_FOLDER,
                 );
                 if (!mainEntry) {
-                  logger.warn(
-                    { sourceGroup },
-                    'Escalation dropped: main group not registered',
+                  // Main group not registered — but an escalation (esp. one carrying a
+                  // drafted customer reply) must NOT be dropped silently. Fall back to
+                  // ntfy push so Blayke still sees it.
+                  logger.error(
+                    { sourceGroup, summary: data.summary },
+                    'Main group not registered — sending escalation via ntfy fallback',
+                  );
+                  sendPushAlert(
+                    `ESCALATION (${data.severity || 'urgent'}) from ${sourceGroup}: ${data.summary}\n${data.recommendation || ''}`,
                   );
                 } else {
                   const [mainJid] = mainEntry;
@@ -358,6 +365,25 @@ export function startIpcWatcher(deps: IpcDeps): void {
   logger.info('IPC watcher started (per-group namespaces)');
 }
 
+/**
+ * Alert the owner about an IPC-task failure. A legit schedule/pause/cancel that
+ * the host rejects must NOT vanish silently — the MCP tool already told Andy
+ * "scheduled," so the owner needs to know it didn't actually happen. Falls back
+ * to ntfy if the main group isn't registered.
+ */
+function alertMainGroup(deps: IpcDeps, message: string): void {
+  const groups = deps.registeredGroups();
+  for (const [jid, g] of Object.entries(groups)) {
+    if (g.folder === MAIN_GROUP_FOLDER) {
+      deps.sendMessage(jid, message).catch((err) =>
+        logger.warn({ err }, 'Failed to send IPC failure alert'),
+      );
+      return;
+    }
+  }
+  sendPushAlert(message);
+}
+
 export async function processTaskIpc(
   data: {
     type: string;
@@ -400,6 +426,10 @@ export async function processTaskIpc(
             { targetJid },
             'Cannot schedule task: target group not registered',
           );
+          alertMainGroup(
+            deps,
+            `⚠️ Andy tried to schedule a task but the target group isn't registered — *task was NOT created*.\nPrompt: "${data.prompt!.slice(0, 100)}"`,
+          );
           break;
         }
 
@@ -428,6 +458,7 @@ export async function processTaskIpc(
               { scheduleValue: data.schedule_value },
               'Invalid cron expression',
             );
+            alertMainGroup(deps, `⚠️ Andy's scheduled task was rejected — invalid cron "${data.schedule_value}". Task NOT created.`);
             break;
           }
         } else if (scheduleType === 'interval') {
@@ -437,6 +468,7 @@ export async function processTaskIpc(
               { scheduleValue: data.schedule_value },
               'Invalid interval',
             );
+            alertMainGroup(deps, `⚠️ Andy's scheduled task was rejected — invalid interval "${data.schedule_value}". Task NOT created.`);
             break;
           }
           nextRun = new Date(Date.now() + ms).toISOString();
@@ -447,6 +479,7 @@ export async function processTaskIpc(
               { scheduleValue: data.schedule_value },
               'Invalid timestamp',
             );
+            alertMainGroup(deps, `⚠️ Andy's scheduled task was rejected — invalid timestamp "${data.schedule_value}". Task NOT created.`);
             break;
           }
           nextRun = scheduled.toISOString();

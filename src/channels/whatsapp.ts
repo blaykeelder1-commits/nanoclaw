@@ -137,6 +137,11 @@ export class WhatsAppChannel implements Channel {
         // Start periodic presence pings to reduce 428 keepalive disconnects
         this.startPresencePings();
 
+        // Start periodic queue drain so a message that failed on a TRANSIENT send
+        // error (while still "connected") doesn't sit in the queue until the next
+        // full reconnect — which may never come if the socket stays up.
+        this.startQueueFlusher();
+
         // Build LID to phone mapping from auth state for self-chat translation
         if (this.sock.user) {
           const phoneUser = this.sock.user.id.split(':')[0];
@@ -353,7 +358,10 @@ export class WhatsAppChannel implements Channel {
   }
 
   ownsJid(jid: string): boolean {
-    return jid.endsWith('@g.us') || jid.endsWith('@s.whatsapp.net');
+    // Include @lid: inbound accepts @lid JIDs, and a registered group whose JID
+    // didn't translate to a phone JID stays keyed as @lid — without this, outbound
+    // to it finds no channel and is silently dropped.
+    return jid.endsWith('@g.us') || jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid');
   }
 
   /**
@@ -362,6 +370,7 @@ export class WhatsAppChannel implements Channel {
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private presenceTimer: ReturnType<typeof setInterval> | null = null;
+  private flushTimer: ReturnType<typeof setInterval> | null = null;
 
   private reconnectWithBackoff(): void {
     this.reconnectAttempt++;
@@ -387,6 +396,8 @@ export class WhatsAppChannel implements Channel {
     this.reconnectTimer = null;
     if (this.presenceTimer) clearInterval(this.presenceTimer);
     this.presenceTimer = null;
+    if (this.flushTimer) clearInterval(this.flushTimer);
+    this.flushTimer = null;
   }
 
   /**
@@ -399,6 +410,22 @@ export class WhatsAppChannel implements Channel {
         this.sock.sendPresenceUpdate('available').catch((err: unknown) => { logger.debug({ err }, 'Periodic presence ping failed'); });
       }
     }, WA_PRESENCE_INTERVAL_MS);
+  }
+
+  /**
+   * Periodically drain the outgoing queue while connected. flushOutgoingQueue is
+   * idempotent (guarded by this.flushing) and only sends when there's a backlog,
+   * so this is cheap when the queue is empty.
+   */
+  private startQueueFlusher(): void {
+    if (this.flushTimer) return;
+    this.flushTimer = setInterval(() => {
+      if (this.connected && this.outgoingQueue.length > 0) {
+        this.flushOutgoingQueue().catch((err) =>
+          logger.warn({ err }, 'Periodic queue flush failed'),
+        );
+      }
+    }, 30_000);
   }
 
   async disconnect(): Promise<void> {

@@ -38,7 +38,7 @@ let outboundProcessed = 0;
 let outboundSuppressed = 0;
 
 export function getPipelineStats() {
-  return { inboundProcessed, inboundRejected, outboundProcessed, outboundSuppressed };
+  return { inboundProcessed, inboundRejected, outboundProcessed, outboundSuppressed, outboundDeadLettered };
 }
 
 // ── Escalation alerting ──────────────────────────────────────────
@@ -55,6 +55,28 @@ function getMainGroupJid(): string | null {
     if (group.folder === MAIN_GROUP_FOLDER) return jid;
   }
   return null;
+}
+
+let outboundDeadLettered = 0;
+
+/**
+ * A genuinely lost outbound message (rate-limited customer reply, or a send that
+ * failed after retry) — record it and page the owner via the main group's channel
+ * DIRECTLY (bypassing the pipeline, so the alert itself can't be rate-limited or
+ * deduped away). Never let a customer-facing message vanish without a trace.
+ */
+function deadLetterOutbound(jid: string, channel: string, text: string, reason: string): void {
+  outboundDeadLettered++;
+  logger.error({ audit: 'outbound_dead_letter', jid, channel, reason, preview: text.slice(0, 120) }, 'Outbound message dead-lettered');
+  const mainJid = getMainGroupJid();
+  if (!mainJid || mainJid === jid) return; // don't recurse alerting about the main group itself
+  const mainCh = findChannel(mainJid);
+  if (!mainCh) return;
+  const alert =
+    `⚠️ *Undelivered message* (${channel}, ${reason})\nTo: ${jid}\n\n"${text.slice(0, 300)}"\n\n_Resend manually if needed._`;
+  mainCh.sendMessage(mainJid, alert).catch((err: unknown) =>
+    logger.warn({ err }, 'Failed to send outbound dead-letter alert'),
+  );
 }
 
 // ── Pipelines (created once, used everywhere) ─────────────────────
@@ -184,15 +206,22 @@ export async function routeOutbound(jid: string, text: string): Promise<void> {
     return;
   }
 
-  const finalText = outboundPipeline.process({
+  const verdict = outboundPipeline.processDetailed({
     chatJid: jid,
     text,
     channel: ch.name,
   });
+  const finalText = verdict.text;
 
   if (!finalText || !finalText.trim()) {
-    logger.warn({ jid }, 'Outbound message empty after pipeline processing — suppressed');
     outboundSuppressed++;
+    // A rate-limit drop is a GENUINE lost message (vs an intentional dedup/error
+    // suppression) — dead-letter it so a throttled customer reply never vanishes silently.
+    if (verdict.rejectedBy === 'outbound-rate-limiter') {
+      deadLetterOutbound(jid, ch.name, text, `rate-limited: ${verdict.reason ?? ''}`);
+    } else {
+      logger.warn({ jid, rejectedBy: verdict.rejectedBy, reason: verdict.reason }, 'Outbound message suppressed by pipeline');
+    }
     return;
   }
 
@@ -213,8 +242,10 @@ export async function routeOutbound(jid: string, text: string): Promise<void> {
     } catch (retryErr) {
       logger.error(
         { jid, channel: ch.name, err: retryErr instanceof Error ? retryErr.message : String(retryErr) },
-        'Outbound send failed after retry — message dropped',
+        'Outbound send failed after retry — dead-lettering',
       );
+      // A reply that failed twice is a real lost message — never drop it silently.
+      deadLetterOutbound(jid, ch.name, finalText, 'send failed after retry');
     }
   }
 

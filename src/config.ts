@@ -46,6 +46,12 @@ export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 export const MAIN_GROUP_FOLDER = 'main';
 
+// The single source of truth for the application SQLite DB. db.ts opens this;
+// health checks and backups MUST point here too. (Historically the size-check and
+// backups targeted DATA_DIR/data.db — a 0-byte stray — so "backups" backed up
+// nothing and the DB-size guard monitored the wrong file.)
+export const DB_PATH = path.resolve(STORE_DIR, 'messages.db');
+
 // Owner-facing notification channels (Blayke's command/ops groups) are exempt
 // from the per-JID outbound rate cap — that cap exists to throttle CUSTOMER
 // channels, not to silence the owner's own ops feeds. Without this, a chatty
@@ -120,7 +126,10 @@ export const QUO_WEBHOOK_PORT = parseInt(
 export const MIN_SPAWN_COOLDOWN_MS = parseInt(process.env.MIN_SPAWN_COOLDOWN_MS || '3000', 10);
 export const WA_QUEUE_CAP = parseInt(process.env.WA_QUEUE_CAP || '100', 10);
 export const WA_PRESENCE_INTERVAL_MS = parseInt(process.env.WA_PRESENCE_INTERVAL_MS || '300000', 10);
-export const BOOKING_HEALTH_URL = process.env.BOOKING_HEALTH_URL || 'http://localhost:3200/health';
+// The standalone Sheridan booking server runs on 3201 (Caddy routes all
+// /api/booking/* there). Port 3200 is the web-chat channel, NOT booking — the
+// old 3200 default health-checked the wrong service.
+export const BOOKING_HEALTH_URL = process.env.BOOKING_HEALTH_URL || 'http://localhost:3201/health';
 
 // --- Model routing & budget ---
 // Scheduled/background tasks use Haiku for cost efficiency
@@ -173,6 +182,17 @@ export const CLI_FALLBACK_ENABLED = process.env.CLI_FALLBACK_ENABLED === 'true';
 export const CLI_TIMEOUT = parseInt(process.env.CLI_TIMEOUT || '1800000', 10); // 30 min — heavy tasks (vending scrape, lead scrape, marketplace renew) routinely exceed 10 min
 export const CLI_MODEL = process.env.CLI_MODEL || 'claude-sonnet-4-6'; // Sonnet free with Max
 export const CLI_MCP_CONFIG = path.resolve(PROJECT_ROOT, 'cowork-mcp.json');
+
+// CLI-auth circuit breaker: consecutive AUTH_401 failures before the CLI path is
+// gated (paused) and the owner is paged ONCE with the manual re-auth fix. The
+// health probe authenticates for real every cycle and auto-closes the gate on
+// recovery. 2 = a real outage tick, not a single transient blip. This is what
+// turns a recoverable token expiry into one loud page instead of a silent
+// 288×/day failure storm (see the Jun-20 outage).
+export const CLI_AUTH_FAILURE_THRESHOLD = Math.max(
+  1,
+  parseInt(process.env.CLI_AUTH_FAILURE_THRESHOLD || '2', 10) || 2,
+);
 
 // --- Conversation History ---
 // Number of recent messages (including bot responses) to inject as context.

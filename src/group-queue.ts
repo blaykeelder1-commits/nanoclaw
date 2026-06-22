@@ -34,6 +34,7 @@ export class GroupQueue {
   private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null =
     null;
   private onMessageQueued: ((groupJid: string, activeCount: number) => void) | null = null;
+  private onDeadLetter: ((groupJid: string, retryCount: number) => void) | null = null;
   private shuttingDown = false;
 
   private getGroup(groupJid: string): GroupState {
@@ -61,6 +62,11 @@ export class GroupQueue {
 
   setOnMessageQueued(fn: (groupJid: string, activeCount: number) => void): void {
     this.onMessageQueued = fn;
+  }
+
+  /** Called when a group's messages are dropped after exhausting retries. */
+  setOnDeadLetter(fn: (groupJid: string, retryCount: number) => void): void {
+    this.onDeadLetter = fn;
   }
 
   enqueueMessageCheck(groupJid: string): void {
@@ -262,6 +268,12 @@ export class GroupQueue {
         { groupJid, retryCount: state.retryCount },
         'Max retries exceeded, dropping messages (will retry on next incoming message)',
       );
+      // Don't fail silently — page the owner. The messages stay in SQLite and
+      // retry on the next inbound, but the owner should know processing stalled.
+      if (this.onDeadLetter) {
+        try { this.onDeadLetter(groupJid, state.retryCount); }
+        catch (err) { logger.warn({ err, groupJid }, 'onDeadLetter handler threw'); }
+      }
       state.retryCount = 0;
       return;
     }

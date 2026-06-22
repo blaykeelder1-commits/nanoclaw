@@ -4,9 +4,10 @@ Standalone booking API on port 3201. Handles all booking traffic in production v
 
 ## Architecture
 
-- **This server** (port 3201): Handles `/api/availability`, `/api/checkout`, `/api/square-webhook`, `/api/booking/*`
-- **Embedded server** (port 3200, `src/square-payments.ts`): Legacy booking code inside NanoClaw. Still has booking functions but Caddy routes all booking API calls to port 3201. The embedded server's `expirePendingBookings()` and `getAvailabilityBusySlots()` are called by the health system, NOT by API requests.
-- **Both servers share the same SQLite database** at `services/booking/data/bookings.db`
+- **This server** (port 3201, separate process): Handles `/api/availability`, `/api/checkout`, `/api/square-webhook`, `/api/booking/*`, and `GET /health`. Caddy routes all booking traffic here. This is what the NanoClaw health monitor checks (`BOOKING_HEALTH_URL` → `http://localhost:3201/health`).
+- **No embedded HTTP booking server.** `src/square-payments.ts` in the NanoClaw process is NOT an HTTP server — it exposes in-process helper functions (`expirePendingBookings()`, `getAvailabilityBusySlots()`) that the health/maintenance loop calls directly. Port 3200 is the NanoClaw web-chat channel, unrelated to booking.
+- **Shared SQLite database** at `services/booking/data/bookings.db` (used by the 3201 server and the in-process helpers).
+- **Owner-notify resilience:** `notifyOwnerOnce()` retries via a 60s watchdog and, if the owner email fails, sends an independent **ntfy** backup alert (topic `NANOCLAW_ALERT_TOPIC`) so a paid booking is never invisible.
 
 ## Critical Rules
 
