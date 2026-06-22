@@ -216,7 +216,14 @@ function refreshCliToken(): Promise<boolean> {
 
   return new Promise((resolve) => {
     logger.info('Attempting CLI OAuth token refresh (lock acquired)...');
+    // Strip env auth so the refresh uses the on-disk OAuth creds, not a stale
+    // CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY from .env (which would 401 or
+    // bill the API key and prevent the file token from ever refreshing).
+    const refreshEnv = { ...process.env };
+    delete refreshEnv.ANTHROPIC_API_KEY;
+    delete refreshEnv.CLAUDE_CODE_OAUTH_TOKEN;
     const proc = spawn('claude', ['-p', 'ping', '--max-turns', '1', '--output-format', 'json'], {
+      env: refreshEnv,
       timeout: 60000,
       stdio: ['pipe', 'pipe', 'pipe'],
     });

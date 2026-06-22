@@ -449,20 +449,38 @@ This is how the operation gets smoother and more innovative every week. Never em
 // ── CLI readiness check ───────────────────────────────────────────
 
 export function checkCliReadiness(): void {
-  if (CLI_ENABLED) {
-    const envSecrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN']);
-    const hasOAuthToken = !!(process.env.CLAUDE_CODE_OAUTH_TOKEN || envSecrets.CLAUDE_CODE_OAUTH_TOKEN);
-    if (!hasOAuthToken) {
-      const fallbackWarning = CLI_FALLBACK_ENABLED
-        ? 'CLI_FALLBACK_ENABLED=true — tasks WILL fall back to container and BURN API CREDITS'
-        : 'CLI_FALLBACK_ENABLED=false (default) — tasks will be SKIPPED when CLI fails';
-      logger.warn(
-        { cliEnabled: true, oauthToken: false, fallbackEnabled: CLI_FALLBACK_ENABLED },
-        `CLAUDE_CODE_OAUTH_TOKEN is not set. ${fallbackWarning}.`,
-      );
-    } else {
-      logger.info('CLI mode ready: CLAUDE_CODE_OAUTH_TOKEN is set');
+  if (!CLI_ENABLED) return;
+
+  // Truth = the on-disk OAuth credentials the CLI actually authenticates with
+  // (from `claude` login), NOT a CLAUDE_CODE_OAUTH_TOKEN env var. The run/refresh
+  // paths deliberately strip env auth and use this file, so checking the env var
+  // here was misleading (it reported "ready" while a stale file token 401'd).
+  let ok = false;
+  let detail = 'no credentials file — run `claude` as the service user to log in';
+  try {
+    const home = process.env.HOME || os.homedir();
+    const creds = JSON.parse(fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf-8'));
+    const oauth = creds.claudeAiOauth;
+    if (oauth?.accessToken) {
+      const expMs = oauth.expiresAt ?? 0;
+      if (!oauth.expiresAt || expMs > Date.now()) {
+        ok = true;
+        detail = oauth.expiresAt ? `token valid until ${new Date(expMs).toISOString()}` : 'token present (no expiry)';
+      } else {
+        detail = `token EXPIRED ${new Date(expMs).toISOString()} — re-auth: run \`claude\` as the service user`;
+      }
     }
+  } catch (err) {
+    detail = `credentials unreadable (${err instanceof Error ? err.message : String(err)})`;
+  }
+
+  if (ok) {
+    logger.info({ cli: true }, `CLI mode ready: ${detail}`);
+  } else {
+    const consequence = CLI_FALLBACK_ENABLED
+      ? 'CLI_FALLBACK_ENABLED=true — tasks WILL fall back to container and BURN API CREDITS'
+      : 'CLI_FALLBACK_ENABLED=false — the CLI-auth breaker will pause tasks and page you until re-auth';
+    logger.warn({ cli: true, fallbackEnabled: CLI_FALLBACK_ENABLED }, `CLI auth NOT ready: ${detail}. ${consequence}.`);
   }
 }
 

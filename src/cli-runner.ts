@@ -91,7 +91,17 @@ async function ensureFreshToken(): Promise<void> {
     try {
       logger.info('CLI token expired — refreshing (lock acquired)');
       await new Promise<void>((resolve) => {
+        // CRITICAL: strip env auth so the refresh ping uses the on-disk OAuth
+        // creds (and its refresh token), NOT a stale CLAUDE_CODE_OAUTH_TOKEN /
+        // ANTHROPIC_API_KEY from .env. With those present the refresh ping 401s
+        // (stale token) or bills the API key, so the file token never refreshes —
+        // exactly why the Jun-20 expiry became a multi-day outage instead of
+        // auto-healing.
+        const refreshEnv = { ...process.env };
+        delete refreshEnv.ANTHROPIC_API_KEY;
+        delete refreshEnv.CLAUDE_CODE_OAUTH_TOKEN;
         const proc = spawn('claude', ['-p', 'ping', '--max-turns', '1', '--output-format', 'json'], {
+          env: refreshEnv,
           timeout: 60000,
           stdio: ['pipe', 'pipe', 'pipe'],
         });
