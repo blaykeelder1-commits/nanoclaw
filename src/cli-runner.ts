@@ -510,6 +510,7 @@ function buildSystemPrompt(groupFolder: string): string {
     '## Channel Awareness',
     'The prompt includes a `<channel>` tag indicating which channel this message arrived on (sms, whatsapp, web, messenger, email).',
     'Use the channel tag to select the correct formatting rules from your CLAUDE.md "Message Formatting" section.',
+    'When `<channel>` is `sms`: SMS is metered pay-as-you-go (every ~600 characters is a separately billed text). Reply in 1–2 short sentences, one message, no greetings/sign-offs/emoji. Give only the answer or the single next step (e.g. a link). If it truly needs a long explanation, send a one-line answer and offer to email details. Do not send multiple back-to-back texts.',
     '',
     '## Sending Messages',
     'You cannot send messages directly. Instead, write your final output as your response.',

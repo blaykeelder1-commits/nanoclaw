@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 
 const SMS_MAX_LENGTH = 600;
+const SMS_MAX_SEGMENTS = 2;
 
 /** Exact copy of the private splitSmsMessage from quo.ts for testing. */
 function splitSmsMessage(text: string): string[] {
@@ -15,7 +16,7 @@ function splitSmsMessage(text: string): string[] {
   const segments: string[] = [];
   let remaining = text;
 
-  while (remaining.length > SMS_MAX_LENGTH) {
+  while (remaining.length > SMS_MAX_LENGTH && segments.length < SMS_MAX_SEGMENTS - 1) {
     let splitAt = -1;
     for (const sep of ['. ', '! ', '? ', '\n']) {
       const idx = remaining.lastIndexOf(sep, SMS_MAX_LENGTH);
@@ -30,7 +31,12 @@ function splitSmsMessage(text: string): string[] {
     remaining = remaining.slice(splitAt).trim();
   }
 
-  if (remaining) segments.push(remaining);
+  if (remaining) {
+    if (remaining.length > SMS_MAX_LENGTH) {
+      remaining = remaining.slice(0, SMS_MAX_LENGTH - 1).trimEnd() + '…';
+    }
+    segments.push(remaining);
+  }
   return segments;
 }
 
@@ -122,35 +128,34 @@ describe('splitSmsMessage', () => {
     expect(result[1].length).toBe(200);
   });
 
-  it('preserves all content across segments', () => {
+  it('preserves content up to the segment cap, truncating the overflow', () => {
     const sentences = [];
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 30; i++) {
       sentences.push(`This is sentence number ${i + 1} with some padding text to make it longer.`);
     }
     const msg = sentences.join(' ');
-    expect(msg.length).toBeGreaterThan(600);
+    expect(msg.length).toBeGreaterThan(SMS_MAX_LENGTH * SMS_MAX_SEGMENTS);
 
     const result = splitSmsMessage(msg);
-    const rejoined = result.join(' ');
-    // All original content should be preserved (modulo whitespace trimming at boundaries)
-    for (const sentence of sentences) {
-      expect(rejoined).toContain(sentence.trim());
-    }
+    // Early content is preserved; the tail beyond the cap is dropped with an ellipsis.
+    expect(result.join(' ')).toContain(sentences[0].trim());
+    expect(result[result.length - 1].endsWith('…')).toBe(true);
   });
 
-  it('handles multiple splits for very long messages', () => {
-    // Build a 2000-char message with sentence boundaries
+  it('never exceeds the segment cap, even for very long messages', () => {
+    // Build a ~2000-char message with sentence boundaries
     const sentences = [];
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 70; i++) {
       sentences.push(`Sentence ${i + 1} here with content.`);
     }
     const msg = sentences.join(' ');
-    expect(msg.length).toBeGreaterThan(600);
+    expect(msg.length).toBeGreaterThan(SMS_MAX_LENGTH * SMS_MAX_SEGMENTS);
 
     const result = splitSmsMessage(msg);
-    expect(result.length).toBeGreaterThanOrEqual(2);
+    // Hard credit guardrail: at most SMS_MAX_SEGMENTS billed texts per reply.
+    expect(result.length).toBeLessThanOrEqual(SMS_MAX_SEGMENTS);
     for (const segment of result) {
-      expect(segment.length).toBeLessThanOrEqual(600);
+      expect(segment.length).toBeLessThanOrEqual(SMS_MAX_LENGTH);
     }
   });
 });

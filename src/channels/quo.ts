@@ -70,15 +70,20 @@ function verifyWebhookSignature(
 
 // ── SMS Message Splitting ──────────────────────────────────────────
 const SMS_MAX_LENGTH = 600;
+// Hard ceiling on billed texts per reply. SMS is metered pay-as-you-go on Quo,
+// so an over-long agent reply must never fan out into many charged messages.
+// Anything beyond this is truncated into the final segment with an ellipsis.
+const SMS_MAX_SEGMENTS = 2;
 
-/** Split long text into SMS-friendly segments at sentence boundaries. */
+/** Split long text into SMS-friendly segments at sentence boundaries, capped at SMS_MAX_SEGMENTS. */
 function splitSmsMessage(text: string): string[] {
   if (text.length <= SMS_MAX_LENGTH) return [text];
 
   const segments: string[] = [];
   let remaining = text;
 
-  while (remaining.length > SMS_MAX_LENGTH) {
+  // Carve full segments until one slot remains, then the tail takes the last slot.
+  while (remaining.length > SMS_MAX_LENGTH && segments.length < SMS_MAX_SEGMENTS - 1) {
     // Find the last sentence boundary within the limit
     let splitAt = -1;
     for (const sep of ['. ', '! ', '? ', '\n']) {
@@ -96,7 +101,14 @@ function splitSmsMessage(text: string): string[] {
     remaining = remaining.slice(splitAt).trim();
   }
 
-  if (remaining) segments.push(remaining);
+  if (remaining) {
+    // Final slot: if the tail still exceeds one segment, truncate rather than
+    // spill into additional billed messages.
+    if (remaining.length > SMS_MAX_LENGTH) {
+      remaining = remaining.slice(0, SMS_MAX_LENGTH - 1).trimEnd() + '…';
+    }
+    segments.push(remaining);
+  }
   return segments;
 }
 
