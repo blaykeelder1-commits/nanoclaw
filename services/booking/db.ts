@@ -95,6 +95,15 @@ function createSchema(): void {
     `ALTER TABLE bookings ADD COLUMN pricing_snapshot TEXT NOT NULL DEFAULT ''`,
     // Pickup time slot for car hauler / utility (also the drop-off due time). Empty for RV.
     `ALTER TABLE bookings ADD COLUMN pickup_time TEXT NOT NULL DEFAULT ''`,
+    // Attribution + server-side conversion tracking. device is parsed from the
+    // checkout User-Agent so we get a GROUND-TRUTH mobile/desktop split for EVERY
+    // booking (incl. pending/cancelled) — independent of GA's client-side undercount.
+    // ga_client_id / gclid let the webhook fire a server-side conversion that's
+    // joined to the original session. conversion_sent_at guards against double-fire.
+    `ALTER TABLE bookings ADD COLUMN device TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE bookings ADD COLUMN ga_client_id TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE bookings ADD COLUMN gclid TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE bookings ADD COLUMN conversion_sent_at TEXT NOT NULL DEFAULT ''`,
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }
@@ -143,6 +152,9 @@ export function createBooking(params: {
   deliveryAddress?: string;
   pickupTime?: string;
   agentInitiated?: boolean;
+  device?: string;
+  gaClientId?: string;
+  gclid?: string;
 }): Booking {
   const now = new Date().toISOString();
 
@@ -152,13 +164,15 @@ export function createBooking(params: {
       customer_first, customer_last, customer_email, customer_phone,
       subtotal, deposit, balance, add_ons, details, status,
       square_order_id, square_payment_link_id, payment_url,
-      calendar_event_id, delivery_address, pickup_time, agent_initiated, created_at, updated_at
+      calendar_event_id, delivery_address, pickup_time, agent_initiated,
+      device, ga_client_id, gclid, created_at, updated_at
     ) VALUES (
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?, ?, ?, ?, ?, 'pending',
       ?, ?, ?,
-      '', ?, ?, ?, ?, ?
+      '', ?, ?, ?,
+      ?, ?, ?, ?, ?
     )
   `).run(
     params.id, params.equipment, params.equipmentLabel,
@@ -171,6 +185,9 @@ export function createBooking(params: {
     params.deliveryAddress || '',
     params.pickupTime || '',
     params.agentInitiated ? 1 : 0,
+    params.device || '',
+    params.gaClientId || '',
+    params.gclid || '',
     now, now,
   );
 
@@ -248,6 +265,19 @@ export function getActiveBookings(): Booking[] {
 export function markOwnerNotified(id: string): void {
   db.prepare('UPDATE bookings SET owner_notified_at = ?, updated_at = ? WHERE id = ?')
     .run(new Date().toISOString(), new Date().toISOString(), id);
+}
+
+/**
+ * Atomically claim the server-side conversion send for a booking. Returns true
+ * only for the FIRST caller (stamps conversion_sent_at in the same UPDATE that
+ * checks it's empty), so duplicate webhooks never double-count a conversion.
+ */
+export function claimConversionSend(id: string): boolean {
+  const now = new Date().toISOString();
+  const res = db
+    .prepare("UPDATE bookings SET conversion_sent_at = ?, updated_at = ? WHERE id = ? AND conversion_sent_at = ''")
+    .run(now, now, id);
+  return res.changes > 0;
 }
 
 /**
@@ -485,6 +515,10 @@ function rowToBooking(row: any): Booking {
     signToken: row.sign_token || '',
     agreementSmsSentAt: row.agreement_sms_sent_at || '',
     pricingSnapshot: row.pricing_snapshot || '',
+    device: row.device || '',
+    gaClientId: row.ga_client_id || '',
+    gclid: row.gclid || '',
+    conversionSentAt: row.conversion_sent_at || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

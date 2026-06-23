@@ -69,6 +69,12 @@ export interface CheckoutRequest {
   sessionId?: string;
   /** Destination / delivery address for the camper. Required for RV unless RIVER promo is active. */
   deliveryAddress?: string;
+  /** GA4 client_id (from the _ga cookie) for server-side conversion attribution. */
+  gaClientId?: string;
+  /** Google Ads click id for offline conversion import. */
+  gclid?: string;
+  /** UTM/attribution blob the form collects; may carry gclid. */
+  attribution?: { gclid?: string; [k: string]: unknown };
 }
 
 export interface CheckoutResponse {
@@ -119,6 +125,14 @@ export interface Booking {
   /** JSON snapshot of the pricing object used at booking time. Lets the agent-payment-link
    *  endpoint recreate the Square payment link without re-validating dates / promo codes. */
   pricingSnapshot: string;
+  /** Device parsed from the checkout User-Agent: 'mobile' | 'tablet' | 'desktop' | ''. Ground-truth device split. */
+  device: string;
+  /** GA4 client_id (from the _ga cookie) captured at checkout, for server-side conversion attribution. */
+  gaClientId: string;
+  /** Google Ads click id captured at checkout, for offline conversion import. */
+  gclid: string;
+  /** Timestamp the server-side conversion was sent to GA4/Ads, or '' if not yet sent (double-fire guard). */
+  conversionSentAt: string;
   createdAt: string;
   updatedAt: string;
 }

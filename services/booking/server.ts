@@ -32,8 +32,9 @@ import {
   createPreBookingAgreement, createBookingAgreement,
   getAgreement, getAgreementByToken, getAgreementForBooking,
   linkAgreementToBooking, getBookingBySignToken, setBookingPaymentLink,
-  setBookingSignToken, setBookingPricingSnapshot,
+  setBookingSignToken, setBookingPricingSnapshot, claimConversionSend,
 } from './db.js';
+import { parseDevice, gaClientIdFromCookie, sendGa4Purchase } from './analytics.js';
 import {
   renderHtml as renderAgreementHtml,
   renderText as renderAgreementText,
@@ -133,6 +134,9 @@ const envKeys = [
   'BOOKING_PUBLIC_BASE_URL',
   'AGENT_API_TOKEN',
   'GOOGLE_MAPS_API_KEY',
+  // Server-side conversion tracking (GA4 Measurement Protocol).
+  'GA4_MEASUREMENT_ID',
+  'GA4_API_SECRET',
 ];
 
 function loadEnv(): void {
@@ -441,6 +445,14 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
     return;
   }
 
+  // Capture attribution + device for ground-truth analytics. Device is parsed
+  // from the User-Agent server-side, so EVERY booking (incl. abandoned/pending)
+  // carries a real mobile/desktop tag — the metric that reveals the true device
+  // funnel independent of GA's client-side undercount.
+  const device = parseDevice(req.headers['user-agent']);
+  const gaClientId = body.gaClientId || gaClientIdFromCookie(req.headers.cookie);
+  const gclid = body.gclid || body.attribution?.gclid || '';
+
   // Store booking in DB
   const booking = createBooking({
     id: bookingId,
@@ -459,6 +471,9 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
     paymentUrl: paymentResult.paymentUrl,
     deliveryAddress,
     pickupTime,
+    device,
+    gaClientId,
+    gclid,
   });
 
   // Bind the pre-signed agreement to the new booking only if one was supplied.
@@ -782,6 +797,20 @@ async function handleSquareWebhook(req: http.IncomingMessage, res: http.ServerRe
       console.error(`[webhook] CRITICAL: Customer confirmation email failed after retries: ${err.message}. Booking ${updatedBooking.id} — manual follow-up required.`),
     );
     notifyOwnerOnce(updatedBooking, 'webhook');
+
+    // Server-side conversion: fire GA4 (and Ads via the linked import) on REAL
+    // payment, once per booking — counted regardless of whether the customer
+    // returned to the form. claimConversionSend atomically guards double-fire;
+    // GA4 also dedups by transaction_id as a backstop.
+    if (claimConversionSend(updatedBooking.id)) {
+      sendGa4Purchase(updatedBooking)
+        .then((r) =>
+          r.ok
+            ? console.log(`[webhook] Conversion → GA4 for ${updatedBooking.id} (device=${updatedBooking.device || 'unknown'})`)
+            : console.warn(`[webhook] Conversion NOT sent for ${updatedBooking.id}: ${r.reason}`),
+        )
+        .catch((e: any) => console.error(`[webhook] Conversion send threw: ${e?.message || e}`));
+    }
 
     // License + signature are now collected AFTER payment for EVERY booking (web
     // and agent), so text the customer the link(s) for whatever is still missing.
