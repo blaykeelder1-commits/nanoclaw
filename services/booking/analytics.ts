@@ -50,6 +50,11 @@ export async function sendGa4Purchase(booking: Booking): Promise<{ ok: boolean; 
           transaction_id: booking.id,
           value,
           currency: 'USD',
+          // session_id + a non-zero engagement time let GA4 stitch this server-side
+          // purchase onto the SAME funnel session the browser opened, so the ordered
+          // funnel finally credits mobile pay-and-close buyers. Omitted if unknown
+          // (older bookings) — the conversion still counts, just session-unattributed.
+          ...(booking.gaSessionId ? { session_id: booking.gaSessionId, engagement_time_msec: 1 } : {}),
           // Custom param so we can segment conversions by the TRUE device server-side.
           device_category: booking.device || 'unknown',
           items: [

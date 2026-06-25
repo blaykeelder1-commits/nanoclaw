@@ -451,6 +451,7 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
   // funnel independent of GA's client-side undercount.
   const device = parseDevice(req.headers['user-agent']);
   const gaClientId = body.gaClientId || gaClientIdFromCookie(req.headers.cookie);
+  const gaSessionId = body.gaSessionId || '';
   const gclid = body.gclid || body.attribution?.gclid || '';
 
   // Store booking in DB
@@ -473,6 +474,7 @@ async function handleCheckout(req: http.IncomingMessage, res: http.ServerRespons
     pickupTime,
     device,
     gaClientId,
+    gaSessionId,
     gclid,
   });
 
@@ -1060,12 +1062,14 @@ button:disabled{background:#aaa;cursor:wait}
 <div id="status"></div>
 </div>
 <script>
-const f=document.getElementById('lf');const b=document.getElementById('btn');const s=document.getElementById('status');
-f.addEventListener('submit',async e=>{e.preventDefault();b.disabled=true;b.textContent='Uploading...';s.textContent='';
-try{const fd=new FormData(f);const r=await fetch('/api/upload-license/${booking.id}',{method:'POST',body:fd});const j=await r.json();
-if(r.ok){s.className='ok';s.textContent='✓ License received. You\\'re all set. We\\'ll be in touch about pickup.';b.textContent='Done';}
-else{s.className='err';s.textContent='Error: '+(j.error||r.status);b.disabled=false;b.textContent='Upload license';}
-}catch(err){s.className='err';s.textContent='Upload failed: '+err.message;b.disabled=false;b.textContent='Upload license';}});
+var f=document.getElementById('lf');var inp=f.querySelector('input[type=file]');var b=document.getElementById('btn');var s=document.getElementById('status');
+// Re-encode the picked image to a JPEG <= 1600px on the longer side BEFORE upload.
+// 10-25MB iPhone HEIC / portrait photos are the #1 mobile failure: they stall or
+// time out on cellular. Canvas re-encode shrinks them to ~200KB and also removes
+// HEIC content-type ambiguity. Falls back to the original file if decode fails.
+function resizeImage(file){return new Promise(function(resolve){try{var url=URL.createObjectURL(file);var img=new Image();img.onload=function(){try{var MAX=1600;var w=img.naturalWidth,h=img.naturalHeight;if(!w||!h){URL.revokeObjectURL(url);resolve(file);return;}var scale=Math.min(1,MAX/Math.max(w,h));var tw=Math.round(w*scale),th=Math.round(h*scale);var c=document.createElement('canvas');c.width=tw;c.height=th;c.getContext('2d').drawImage(img,0,0,tw,th);c.toBlob(function(blob){URL.revokeObjectURL(url);if(!blob){resolve(file);return;}resolve(new File([blob],'license.jpg',{type:'image/jpeg'}));},'image/jpeg',0.85);}catch(e){URL.revokeObjectURL(url);resolve(file);}};img.onerror=function(){URL.revokeObjectURL(url);resolve(file);};img.src=url;}catch(e){resolve(file);}});}
+f.addEventListener('submit',function(e){e.preventDefault();var file=inp&&inp.files&&inp.files[0];if(!file){s.className='err';s.textContent='Please choose a photo first.';return;}b.disabled=true;b.textContent='Optimizing photo...';s.className='';s.textContent='';
+resizeImage(file).then(function(processed){b.textContent='Uploading...';var fd=new FormData();fd.append('file',processed);return fetch('/api/upload-license/${booking.id}',{method:'POST',body:fd});}).then(function(r){return r.json().then(function(j){return{ok:r.ok,status:r.status,j:j};});}).then(function(res){if(res.ok){s.className='ok';s.textContent='✓ License received. You\\'re all set. We\\'ll be in touch about pickup.';b.textContent='Done';}else{s.className='err';s.textContent='Error: '+(res.j.error||res.status);b.disabled=false;b.textContent='Upload license';}}).catch(function(err){s.className='err';s.textContent='Upload failed: '+err.message;b.disabled=false;b.textContent='Upload license';});});
 </script>
 </body>
 </html>`;

@@ -71,6 +71,8 @@ export interface CheckoutRequest {
   deliveryAddress?: string;
   /** GA4 client_id (from the _ga cookie) for server-side conversion attribution. */
   gaClientId?: string;
+  /** GA4 session_id (from the _ga_<container> cookie) so the webhook purchase joins the same funnel session. */
+  gaSessionId?: string;
   /** Google Ads click id for offline conversion import. */
   gclid?: string;
   /** UTM/attribution blob the form collects; may carry gclid. */
@@ -129,6 +131,8 @@ export interface Booking {
   device: string;
   /** GA4 client_id (from the _ga cookie) captured at checkout, for server-side conversion attribution. */
   gaClientId: string;
+  /** GA4 session_id (from the _ga_<container> cookie) captured at checkout, so the webhook purchase joins the same funnel session. */
+  gaSessionId: string;
   /** Google Ads click id captured at checkout, for offline conversion import. */
   gclid: string;
   /** Timestamp the server-side conversion was sent to GA4/Ads, or '' if not yet sent (double-fire guard). */

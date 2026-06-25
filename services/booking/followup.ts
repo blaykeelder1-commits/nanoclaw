@@ -17,7 +17,11 @@ import { readEnvFile } from './env.js';
 
 // ── Config ──────────────────────────────────────────────────────────
 
-const GOOGLE_REVIEW_LINK = 'https://g.page/r/CfXGb0xX3GFAEBM/review';
+// Opens the CURRENT Sheridan Trailer Rentals listing (CID verified live), where the
+// customer taps "Write a review". The old g.page/r/CfXGb0xX3GFAEBM/review short link
+// belonged to the pre-migration listing and now dead-ends on google.com's home page.
+// One-tap upgrade if desired: paste the new g.page review link from GBP > Get more reviews.
+const GOOGLE_REVIEW_LINK = 'https://www.google.com/maps?cid=17086387066189926116';
 const TEMPLATE_PATH = path.join(process.cwd(), 'tools', 'email', 'templates', 'rental-followup.html');
 const DB_PATH = path.join(process.cwd(), 'services', 'booking', 'data', 'bookings.db');
 const DRY_RUN = process.argv.includes('--dry-run');

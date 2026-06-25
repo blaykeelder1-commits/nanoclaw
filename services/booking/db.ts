@@ -102,6 +102,10 @@ function createSchema(): void {
     // joined to the original session. conversion_sent_at guards against double-fire.
     `ALTER TABLE bookings ADD COLUMN device TEXT NOT NULL DEFAULT ''`,
     `ALTER TABLE bookings ADD COLUMN ga_client_id TEXT NOT NULL DEFAULT ''`,
+    // ga_session_id joins the webhook's server-side purchase to the SAME GA4 funnel
+    // session as the browser's step events — without it the ordered funnel can't
+    // credit mobile pay-and-close buyers (they never return to fire client purchase).
+    `ALTER TABLE bookings ADD COLUMN ga_session_id TEXT NOT NULL DEFAULT ''`,
     `ALTER TABLE bookings ADD COLUMN gclid TEXT NOT NULL DEFAULT ''`,
     `ALTER TABLE bookings ADD COLUMN conversion_sent_at TEXT NOT NULL DEFAULT ''`,
   ];
@@ -154,6 +158,7 @@ export function createBooking(params: {
   agentInitiated?: boolean;
   device?: string;
   gaClientId?: string;
+  gaSessionId?: string;
   gclid?: string;
 }): Booking {
   const now = new Date().toISOString();
@@ -165,14 +170,14 @@ export function createBooking(params: {
       subtotal, deposit, balance, add_ons, details, status,
       square_order_id, square_payment_link_id, payment_url,
       calendar_event_id, delivery_address, pickup_time, agent_initiated,
-      device, ga_client_id, gclid, created_at, updated_at
+      device, ga_client_id, ga_session_id, gclid, created_at, updated_at
     ) VALUES (
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?, ?, ?, ?, ?, 'pending',
       ?, ?, ?,
       '', ?, ?, ?,
-      ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?
     )
   `).run(
     params.id, params.equipment, params.equipmentLabel,
@@ -187,6 +192,7 @@ export function createBooking(params: {
     params.agentInitiated ? 1 : 0,
     params.device || '',
     params.gaClientId || '',
+    params.gaSessionId || '',
     params.gclid || '',
     now, now,
   );
@@ -517,6 +523,7 @@ function rowToBooking(row: any): Booking {
     pricingSnapshot: row.pricing_snapshot || '',
     device: row.device || '',
     gaClientId: row.ga_client_id || '',
+    gaSessionId: row.ga_session_id || '',
     gclid: row.gclid || '',
     conversionSentAt: row.conversion_sent_at || '',
     createdAt: row.created_at,
